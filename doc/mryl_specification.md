@@ -1,0 +1,1264 @@
+﻿# Mryl プログラミング言語 - 完全仕様書
+
+**バージョン**: 0.1.0 
+**最終更新**: 2026年2月21日
+
+---
+
+## 目次
+
+1. [概要](#概要)
+2. [プロジェクト構成](#プロジェクト構成)
+3. [実装機能](#実装機能)
+4. [演算子](#演算子)
+5. [Const 定数とコンパイル時評価](#const-定数とコンパイル時評価)
+6. [条件付きコンパイル](#条件付きコンパイル)
+7. [型システム](#型システム)
+8. [ジェネリック](#ジェネリック)
+9. [構造体とメソッド](#構造体とメソッド)
+10. [ラムダ式](#ラムダ式)
+11. [async / await](#async--await)
+12. [制御フロー](#制御フロー)
+13. [メモリ管理](#メモリ管理)
+14. [コンパイルパイプライン](#コンパイルパイプライン)
+15. [AST構造](#ast構造)
+16. [拡張ガイド](#拡張ガイド)
+
+---
+
+## 概要
+
+**Mryl** は小規模な静的型付けプログラミング言語で、以下の特徴を持っています：
+
+- **静的型付け**: コンパイル時に型チェック
+- **ネイティブコンパイル**: C コード生成を経由して、Windows/Linux で実行可能なバイナリへコンパイル
+- **ジェネリック関数**: 複数の型パラメータをサポート
+- **構造体とメソッド**: オブジェクト指向プログラミングのサポート
+- **メモリ安全性**: 自動メモリ管理（malloc/free の自動化）
+- **完全な演算子セット**: 論理、ビット、複合代入演算子を完全サポート
+- **ラムダ式**: `(x, y) => x + y` の無名関数
+- **async / await**: 状態機械 + シングルスレッドスケジューラによる非同期処理
+
+### コンパイルパイプライン
+
+```
+Mryl ソースコード (.ml)
+  ↓
+[Lexer] トークン化
+  ↓
+[Parser] AST 構築（演算子優先順位を正確に処理）
+  ↓
+[TypeChecker] 型チェック
+  ↓
+[Interpreter] Python インタプリタ (検証用)
+  ↓
+[CodeGenerator] C コード生成
+  ↓
+[GCC (Cygwin)] C コンパイル
+  ↓
+実行可能バイナリ (.exe)
+```
+
+---
+
+## プロジェクト構成
+
+```
+Mryl/
+├── core/
+│   ├── Lexer.py              # トークン化（FAT_ARROW, ASYNC, AWAIT 対応）
+│   ├── Parser.py             # AST 構築（ラムダ, async fn, await）
+│   ├── Ast.py                # AST ノード定義（Lambda, AwaitExpr, is_async）
+│   ├── TypeChecker.py        # 型チェック（fn型, Future<T>型）
+│   ├── Interpreter.py        # Python インタプリタ（クロージャ, asyncio）
+│   ├── CodeGenerator.py      # C コード生成（関数ポインタ, 状態機械, MrylTask）
+│   ├── MrylError.py          # エラー定義
+│   └── Mryl.py               # エントリポイント
+├── tests/
+│   ├── test_01_types.ml         # 基本型・変数宣言・型推論・型キャスト・型昇格
+│   ├── test_02_operators.ml     # 算術/比較/論理/ビット/複合代入/インクリメント
+│   ├── test_03_control.ml       # if-else / while / for / break / continue
+│   ├── test_04_functions.ml     # 基本関数 / 再帰 / ラムダ式 / ジェネリック
+│   ├── test_05_struct.ml        # 構造体 / メソッド / ジェネリック構造体
+│   ├── test_06_enum_match.ml    # enum / match 式
+│   ├── test_07_result.ml        # Result<T,E> / Ok / Err / .try()
+│   ├── test_08_array.ml         # 固定長配列 / 可変長配列
+│   ├── test_09_const_compile.ml # const / #ifdef / #ifndef / #if / #else
+│   ├── test_10_async_await.ml   # async / await / ネスト待機
+│   ├── test_11_builtin.ml       # print / println / to_string
+│   ├── test_12_type_check.ml    # 型宣言 / 型推論 / 型チェック / 型昇格
+│   ├── test_13_boundary_numeric.ml  # 数値型境界値（C0・境界値分析）
+│   ├── test_14_branch_coverage.ml   # 条件分岐網羅（C0/C1/MC/DC）
+│   └── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
+├── my/
+│   ├── print.ml            # print/println デモ
+│   ├── for_loops.ml        # for ループ各種
+│   ├── generic_simple.ml   # ジェネリック関数デモ
+│   ├── generic.ml          # フル機能ジェネリック
+│   ├── struct_methods.ml   # 構造体とメソッド
+│   └── advanced_methods.ml # 高度な機能サンプル
+├── bin/
+│   ├── Mryl.c                # 生成された C ソースコード
+│   └── Mryl.exe              # コンパイル済みバイナリ
+└── doc/
+    ├── readme.md             # 言語リファレンス（ユーザー向け）
+    ├── mryl_specification.md # この開発者仕様書
+    ├── UNIT_TEST_SPEC.md     # 単体テスト仕様書（C0/C1/MC/DC）
+    └── ASYNC_REDESIGN.md     # async/await 設計資料
+```
+
+---
+
+## 実装機能
+
+### 3.1 基本型
+
+| 型 | 説明 | C 対応 |
+|---|---|---|
+| `i8, i16, i32, i64` | 符号付き整数 | `int8_t`, `int16_t`, `int32_t`, `int64_t` |
+| `u8, u16, u32, u64` | 符号なし整数 | `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` |
+| `f32, f64` | 浮動小数点数 | `float`, `double` |
+| `string` | 文字列 | `MrylString` (struct) |
+| `bool` | ブール値 | `int` (1/0) |
+| `T[]` | 配列 | C 配列 |
+
+### 3.2 const 定数
+
+| 機能 | 説明 |
+|------|------|
+| `const NAME = expr` | コンパイル時定数の宣言 |
+| const 式評価 | 算術・論理・ビット演算対応 |
+| const 参照 | 関数内で const を変数として参照可能 |
+| C コード生成 | `#define NAME value` で生成 |
+
+### 3.3 ラムダ式
+
+| 機能 | 説明 |
+|------|------|
+| `(パラメータ) => 式` | ラムダ式の定義 |
+| 型注釈対応 | パラメータに `: T` で型を指定可能 |
+| `fn` 型 | 演算が展開する内部型 (`fn(i32)->i32` 等) |
+| C コード生成 | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
+
+### 3.4 async / await
+
+| 機能 | 説明 |
+|------|------|
+| `async fn name(パラメータ) -> T` | 非同期関数の定義 |
+| `let h = asyncFn(args)` | 即時起動、`Future<T>` 型のハンドルを返す |
+| `let v: T = await h` | 完了待機 + 戻り値取得 |
+| `await h` | void 非同期の完了待機 |
+| `Future<T>` | 非同期タスクの型。C コードでは `MrylTask*` |
+| C コード生成 | SM 構造体 + `move_next` 関数 + ファクトリ関数 + スケジューラ |
+
+### 3.5 条件付きコンパイル
+
+| ディレクティブ | 説明 | 例 |
+|----------|------|-----|
+| `#ifdef NAME` | const が定義されている場合 | `#ifdef DEBUG` |
+| `#ifndef NAME` | const が未定義の場合 | `#ifndef PRODUCTION` |
+| `#if EXPR` | const 式を評価 | `#if OPTIMIZATION_LEVEL > 1` |
+| `#endif` | ブロック終了 | - |
+| `#else` | else 分岐 | - |
+
+**処理フロー:**
+- Lexer でディレクティブトークン認識
+- Parser で ConditionalBlock AST 構築
+- CodeGenerator で条件評価 → 該当ブロックのみコンパイル
+
+### 3.6 数値型型昇格システム
+
+二項演算で型が異なる場合、自動的に上位の型に昇格：
+
+```
+昇格ルール:
+- 符号付き: i8 < i16 < i32 < i64
+- 符号なし: u8 < u16 < u32 < u64
+- 浮動小数点: f32 < f64
+- 整数 + 浮動小数点 → 浮動小数点 (f64)
+- 例: i32 + f32 → f64, u16 + u64 → u64
+```
+
+---
+
+## 演算子
+
+### 演算子優先順位（高→低）
+
+```
+優先度  演算子           結合性   説明
+────────────────────────────────────────
+ 1     ! ~ ++ -- (prefix)  右    単項 NOT、ビット反転、前置インクリメント
+ 2     * / %              左    乗算、除算、剰余
+ 3     + -                左    加算、減算
+ 4     << >>              左    ビットシフト
+ 5     < <= > >=          左    比較演算
+ 6     == !=              左    等価演算
+ 7     &                  左    ビット AND
+ 8     ^                  左    ビット XOR
+ 9     |                  左    ビット OR
+10     &&                 左    論理 AND (短絡評価)
+11     ||                 左    論理 OR (短絡評価)
+12     = += -= *= /= %= <<= >>= ^=  右    代入（複合代入含む）
+```
+
+### 算術演算
+
+```mryl
+let a = 10 + 5;       // 加算 → 15
+let b = 10 - 5;       // 減算 → 5
+let c = 10 * 5;       // 乗算 → 50
+let d = 10 / 5;       // 整数除算 → 2
+let e = 10 % 3;       // 剰余 → 1
+```
+
+### 比較演算
+
+```mryl
+let a = 5 < 10;       // true
+let b = 5 <= 5;       // true
+let c = 10 > 5;       // true
+let d = 10 >= 10;     // true
+let e = 5 == 5;       // true
+let f = 5 != 10;      // true
+```
+
+### 論理演算
+
+```mryl
+let a = true || false;    // OR → true
+let b = true && true;     // AND → true
+let c = !true;            // NOT → false
+
+// ショートサーキット評価
+let short_and = false && expensive_function();  // 右は評価されない
+let short_or = true || expensive_function();    // 右は評価されない
+```
+
+**注**: &&と||は短絡評価される（右側が必要な場合のみ評価）
+
+### ビット演算
+
+```mryl
+let x = 5;        // 0101
+let y = 3;        // 0011
+
+let and = x & y;  // 0001 → 1
+let or = x | y;   // 0111 → 7
+let xor = x ^ y;  // 0110 → 6
+let lshift = x << 1;  // 1010 → 10
+let rshift = x >> 1;  // 0010 → 2
+let not = ~x;     // 反転 → -6 (2進補数)
+```
+
+### インクリメント・デクリメント
+
+```mryl
+let i = 5;
+++i;              // Pre-increment: i を 6 にしてから 6 を返す
+let j = i++;      // Post-increment: 6 を返してから i を 7 に
+i--;              // Post-decrement: 7 を返してから i を 6 に
+--i;              // Pre-decrement: i を 5 にしてから 5 を返す
+```
+
+### 複合代入演算子
+
+```mryl
+let n = 10;
+n += 5;   // n = n + 5 → 15
+n -= 3;   // n = n - 3 → 12
+n *= 2;   // n = n * 2 → 24
+n /= 3;   // n = n / 3 → 8
+n %= 5;   // n = n % 5 → 3
+
+let b = 8;
+b <<= 1;  // b = b << 1 → 16
+b >>= 2;  // b = b >> 2 → 4
+
+let c = 12;
+c ^= 5;   // c = c ^ 5 → 9
+```
+
+**内部処理**: 複合代入は Parser で自動的に二項演算に変換される
+- `n += 5` → `n = (n + 5)`
+
+---
+
+## Const 定数とコンパイル時評価
+
+### const 宣言
+
+`const` キーワードでコンパイル時に評価される定数を宣言：
+
+```mryl
+const MAX_VALUE = 100;
+const PI = 31415;
+const OPTIMIZATION_LEVEL = 2;
+const DEFAULT_SIZE = 256;
+```
+
+**特徴:**
+- **グローバルスコープのみ**: const はプログラムの最上位で宣言
+- **コンパイル時評価**: const 式はコンパイル時に完全に評価される
+- **型推論**: リテラルから自動推論（i32 がデフォルト）
+- **定数式**: 以下の式をサポート：
+  - 数値リテラル、文字列リテラル、ブール値
+  - 二項演算（+, -, *, /, %）
+  - 比較演算（==, !=, <, >, <=, >=）
+  - 論理演算（&&, ||, !）
+  - ビット演算（&, |, ^, <<, >>）
+  - 他の const への参照
+
+### const 式の評価例
+
+```mryl
+const MAX = 100;
+const DOUBLED = MAX * 2;        // 200（コンパイル時計算）
+const RESULT = (100 + 50) / 3;  // 50（コンパイル時計算）
+
+fn main() -> i32 {
+    // const を変数として参照可能
+    let x = MAX;                // x = 100
+    let y = DOUBLED - 40;       // y = 160
+    println(x);
+    println(y);
+    return 0;
+}
+```
+
+### Interpreter と CodeGenerator での処理
+
+```
+Parser: const 宣言 → const_table に値をキャッシュ
+TypeChecker: const 型検証 → const_table で型情報を保持
+Interpreter: const の値を参照可能
+CodeGenerator: const → #define ディレクティブで C コード生成
+```
+
+---
+
+## 条件付きコンパイル
+
+条件付きコンパイルディレクティブで、コンパイル時にコードをインクルード/除外：
+
+### #ifdef - 定数定義チェック
+
+```mryl
+const DEBUG = 1;
+
+#ifdef DEBUG
+println(1);  // DEBUG が定義されていればコンパイルに含める
+#endif
+```
+
+**動作:** DEBUG が const で定義されていれば then_block をコンパイル。定義されていなければスキップ。
+
+### #ifndef - 定数未定義チェック
+
+```mryl
+#ifndef PRODUCTION
+println(1);  // PRODUCTION が定義されていなければコンパイルに含める
+#endif
+```
+
+**動作:** PRODUCTION が const で定義されていなければ then_block をコンパイル。定義されていればスキップ。
+
+### #if - 定数式評価
+
+```mryl
+const OPTIMIZATION_LEVEL = 2;
+
+#if OPTIMIZATION_LEVEL
+println(1);  // ゼロ以外なら実行（OPTIMIZATION_LEVEL = 2）
+#endif
+
+#if OPTIMIZATION_LEVEL > 1
+println(2);  // 式を評価（true）
+#endif
+```
+
+**動作:** const 式をコンパイル時に評価。真なら then_block、偽なら else_block をコンパイル。
+
+### #else による分岐
+
+```mryl
+const MODE = 1;
+
+#ifdef DEBUG
+println(10);  // DEBUG が定義されていれば
+#else
+println(20);  // DEBUG が未定義なら
+#endif
+```
+
+### 条件付きコンパイルの実装詳細
+
+```
+Lexer: #ifdef, #ifndef, #if, #endif, #else トークン認識
+Parser: ConditionalBlock AST ノード作成
+TypeChecker: 両ブロックの型チェック
+Interpreter: 条件評価 → 対応するブロック実行
+CodeGenerator: 条件評価 → 対応するブロックのみ C コード生成
+```
+
+**例: C コード生成でのフィルタリング**
+
+```mryl
+const DEBUG = 1;
+
+#ifdef DEBUG
+printf("Debug\n");    // 含まれる
+#endif
+
+#ifdef PRODUCTION
+printf("Production\n"); // 除外される
+#endif
+```
+
+↓ 生成される C コード
+
+```c
+#define DEBUG 1
+// ... 
+printf("Debug\n");    // このコードのみ含まれる
+```
+
+---
+
+## 型システム
+
+### 型宣言
+
+```mryl
+let x: i32 = 10;
+let y: f64 = 3.14;
+let s: string = "hello";
+let b: bool = true;
+let arr: i32[5] = [1, 2, 3, 4, 5];
+```
+
+### 型推論
+
+```mryl
+let x = 10;           // i32と推論
+let y = 3.14;         // f64と推論
+let s = "hello";      // stringと推論
+```
+
+### 型キャスト
+
+```mryl
+let a = 5(u8);        // u8型のリテラル
+let b = 100(i16);     // i16型のリテラル
+let c = 3.14(f32);    // f32型のリテラル
+```
+
+---
+
+## ジェネリック
+
+### ジェネリック関数
+
+```mryl
+fn add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+// 使用例
+let sum1 = add(5, 10);        // → add_i32 に単相化
+let sum2 = add(3.14, 2.86);   // → add_f64 に単相化
+let concat = add("a", "b");   // → add_string に単相化
+```
+
+### 複数の型パラメータ
+
+```mryl
+fn pair<T, U>(a: T, b: U) -> string {
+    return to_string(a) + to_string(b);
+}
+
+let result = pair(5, "hello");  // → pair_i32_string に単相化
+```
+
+**実装詳細**:
+- Parser で型パラメータを `<T, U>` の形式でパース
+- TypeChecker でジェネリック関数の型チェック（制約緩い）
+- CodeGenerator で単相化: 各型引数の組み合わせで別関数生成
+  - `add_i32(int32_t a, int32_t b) → int32_t`
+  - `add_f64(double a, double b) → double`
+  - `add_string(MrylString a, MrylString b) → MrylString`
+
+---
+
+## 構造体とメソッド
+
+### 構造体定義
+
+```mryl
+struct Point {
+    x: i32,
+    y: i32
+}
+
+struct Pair<T> {
+    first: T,
+    second: T
+}
+```
+
+### メソッド定義
+
+```mryl
+impl Point {
+    fn distance() -> i32 {
+        return x + y;
+    }
+}
+
+impl Pair<T> {
+    fn get_first() -> T {
+        return first;
+    }
+}
+```
+
+### 使用例
+
+```mryl
+let p = Point { x: 3, y: 4 };
+let d = p.distance();  // → Point_distance(p) に変換 → 7
+
+let pair = Pair { first: 10, second: 20 };
+let x = pair.get_first();  // → Pair_T_get_first(pair)
+```
+
+---
+
+## ラムダ式
+
+### 基本構文
+
+```mryl
+let f = (パラメータ: 型) => 式;
+```
+
+### 使用例
+
+```mryl
+fn main() {
+    // 単一パラメータ
+    let mul2 = (x: i32) => x * 2;
+    let r1 = mul2(5);              // 10
+
+    // 複数パラメータ
+    let add = (x: i32, y: i32) => x + y;
+    let r2 = add(3, 7);            // 10
+
+    // 比較式
+    let is_positive = (n: i32) => n > 0;
+    let r3 = is_positive(5);       // true (1)
+}
+```
+
+### 型システム
+
+- ラムダ変数の型は内部的に `fn` 型として扱われる
+- TypeChecker が引数・戻り値の型を推論し `fn(i32, i32) -> i32` 形式で保持
+
+### C コード生成
+
+```c
+// ラムダ → static 関数 + 型付き関数ポインタ
+static int32_t __lambda_0(int32_t x) {
+    return (x * 2);
+}
+
+int main(void) {
+    int32_t (*mul2)(int32_t) = __lambda_0;
+    int32_t r1 = mul2(5);   // 10
+}
+```
+
+**static 関数の挿入位置**: 最初の関数定義の直前
+
+### Python インタプリタでの動作
+
+クロージャとして実装 — 宣言時点の環境をキャプチャした辞書 `{'__lambda__': True, 'params', 'body', 'captured_env'}` として保存。
+
+---
+
+## async / await
+
+### 非同期関数の定義
+
+```mryl
+async fn compute_sum(n: i32) -> i32 {
+    let result: i32 = n * n;
+    return result;
+}
+
+async fn print_message() {
+    println("Hello from async function!");
+}
+```
+
+### 呼び出しと await
+
+```mryl
+fn main() {
+    // 非同期タスクを起動 → スケジューラへ POST、MrylTask* を返す
+    let handle = compute_sum(7);
+
+    // 完了待機 + 戻り値取得
+    let result: i32 = await handle;    // 49
+    println("{}", result);
+
+    // void 非同期の await
+    let h2 = print_message();
+    await h2;
+}
+```
+
+### アーキテクチャ
+
+Mryl の async/await は **C# 風の状態機械 + シングルスレッドスケジューラ** で実装されます。  
+pthreads、OS スレッド、外部ライブラリは不要です。
+
+```
+async fn  →  SM 構造体 + move_next 関数 + ファクトリ関数
+fn main() →  SM 構造体 + move_next 関数 + main エントリポイント
+await     →  awaiter 設定 + 中断点記録 + 再 POST で再開
+```
+
+### MrylTask 構造体と状態
+
+```c
+typedef enum {
+    MRYL_TASK_PENDING,
+    MRYL_TASK_RUNNING,
+    MRYL_TASK_COMPLETED,
+    MRYL_TASK_CANCELLED,
+    MRYL_TASK_FAULTED
+} MrylTaskState;
+
+typedef struct MrylTask {
+    int           strong_count;  // 強参照カウント（所有権）
+    int           weak_count;    // 弱参照カウント（キャンセルトークン）
+    MrylTaskState state;
+    void*         result;        // 戻り値（ヒープ確保 void*）
+    void        (*move_next)(struct MrylTask*);
+    void        (*on_cancel)(struct MrylTask*);
+    void*         sm;            // SM 構造体ポインタ
+    struct MrylTask* awaiter;    // 完了時に再開するタスク
+} MrylTask;
+```
+
+### スケジューラ
+
+```c
+#define __SCHEDULER_CAP 256
+typedef struct {
+    MrylTask* queue[__SCHEDULER_CAP];
+    int head, tail;
+} MrylScheduler;
+
+static MrylScheduler __scheduler;
+
+static inline void __scheduler_init(void) { __scheduler.head = __scheduler.tail = 0; }
+static inline void __scheduler_post(MrylTask* t) {
+    __scheduler.queue[__scheduler.tail++ % __SCHEDULER_CAP] = t;
+}
+static inline void __scheduler_run(void) {
+    while (__scheduler.head != __scheduler.tail) {
+        MrylTask* t = __scheduler.queue[__scheduler.head++ % __SCHEDULER_CAP];
+        if (t->state != MRYL_TASK_CANCELLED) t->move_next(t);
+    }
+}
+```
+
+- **シングルスレッド**、ロックフリー、静的循環バッファ（最大 256 タスク）
+- `move_next()` が `return` すると制御がスケジューラに返り次のタスクを処理
+- `await` で中断したタスクは、被待機タスクの完了時に `awaiter` 経由で再 POST
+
+### 参照カウント（メモリ管理）
+
+| イベント | `strong_count` 変化 |
+|---------|--------------------|
+| ファクトリ生成 | `= 1` |
+| 呼び出し元 `__task_retain()` | `+1 → 2` |
+| SM 完了時 `__task_release()` | `-1 → 1` |
+| `await` 後 `__task_release()` | `-1 → 0 → free` |
+| `main()` タスク生成時 | `= 2`（SM 完了で 1、`scheduler_run` 後の明示 release で 0）|
+
+弱参照は `__task_weak_retain()` / `__task_weak_release()` で管理。  
+`__task_lock()` で弱参照から強参照に昇格（CANCELLED/COMPLETED なら `NULL`）。
+
+### C コード生成の詳細（`test_async.ml` より）
+
+#### SM 構造体とファクトリ（`compute_sum`）
+
+```c
+// SM 構造体：パラメータ + ローカル変数 + __state + __task
+typedef struct {
+    int __state;
+    int32_t n;          // パラメータ
+    int32_t result;     // ローカル変数
+    MrylTask* __task;
+} __ComputeSum_SM;
+
+// move_next 関数（goto-dispatch）
+void __compute_sum_move_next(MrylTask* __task) {
+    __ComputeSum_SM* __sm = (__ComputeSum_SM*)__task->sm;
+    if (__task->state == MRYL_TASK_CANCELLED) return;
+    switch (__sm->__state) {
+        case 0: goto __state_0;
+        default: return;
+    }
+    __state_0: {
+        __sm->result = (__sm->n * __sm->n);
+        int32_t* __res = (int32_t*)malloc(sizeof(int32_t));
+        *__res = __sm->result;
+        __task->result = (void*)__res;
+        __task->state = MRYL_TASK_COMPLETED;
+        __task_release(__task);               // strong 2→1
+        if (__task->awaiter) __scheduler_post(__task->awaiter); // main を再開
+        return;
+    }
+}
+
+// ファクトリ関数
+MrylTask* compute_sum(int32_t n) {
+    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
+    __ComputeSum_SM* __sm = (__ComputeSum_SM*)malloc(sizeof(__ComputeSum_SM));
+    memset(__sm, 0, sizeof(__ComputeSum_SM));
+    __sm->n = n;
+    __sm->__task      = __task;
+    __task->strong_count = 1;   // ファクトリ所有分
+    __task->state        = MRYL_TASK_PENDING;
+    __task->move_next    = __compute_sum_move_next;
+    __task->sm           = __sm;
+    __scheduler_post(__task);
+    return __task;
+}
+```
+
+#### main() の状態機械（2 つの await = 3 状態）
+
+```c
+typedef struct {
+    int __state;
+    MrylTask* handle;   // compute_sum(7) の結果
+    int32_t result;     // await handle の結果
+    MrylTask* h2;       // print_message() の結果
+    MrylTask* __task;
+} __Main_SM;
+
+void __main_move_next(MrylTask* __task) {
+    __Main_SM* __sm = (__Main_SM*)__task->sm;
+    if (__task->state == MRYL_TASK_CANCELLED) return;
+    switch (__sm->__state) {
+        case 0: goto __state_0;
+        case 1: goto __state_1;
+        case 2: goto __state_2;
+        default: return;
+    }
+    __state_0: {  // 初期: compute_sum 起動 + await 設定
+        __sm->handle = compute_sum(7);
+        __task_retain(__sm->handle);               // strong 1→2
+        __sm->handle->awaiter = __task;            // 完了時 main を再開
+        if (__sm->handle->state != MRYL_TASK_COMPLETED) {
+            __sm->__state = 1; return;             // 中断:
+        }
+        goto __state_1;
+    }
+    __state_1: {  // compute_sum 完了後: 結果取得 + print_message 起動
+        if (__sm->handle->state == MRYL_TASK_CANCELLED) {
+            __sm->result = 0;
+        } else {
+            __sm->result = *(int32_t*)__sm->handle->result;
+        }
+        __task_release(__sm->handle);              // strong 2→1→0→free
+        println("%d", __sm->result);
+        __sm->h2 = print_message();
+        __task_retain(__sm->h2);
+        __sm->h2->awaiter = __task;
+        if (__sm->h2->state != MRYL_TASK_COMPLETED) {
+            __sm->__state = 2; return;
+        }
+        goto __state_2;
+    }
+    __state_2: {  // print_message 完了後: main 終了
+        __task_release(__sm->h2);
+        __task->state = MRYL_TASK_COMPLETED;
+        __task_release(__task);                    // strong 2→1
+        if (__task->awaiter) __scheduler_post(__task->awaiter);
+        return;
+    }
+}
+
+int main(void) {
+    __scheduler_init();
+    MrylTask* __main_task = (MrylTask*)malloc(sizeof(MrylTask));
+    __Main_SM* __main_sm  = (__Main_SM*)malloc(sizeof(__Main_SM));
+    memset(__main_sm, 0, sizeof(__Main_SM));
+    __main_sm->__task        = __main_task;
+    __main_task->strong_count = 2;           // main が 2 持つ
+    __main_task->move_next    = __main_move_next;
+    __main_task->sm           = __main_sm;
+    __scheduler_post(__main_task);
+    __scheduler_run();                       // 全タスクが完了するまでポンプ
+    __task_release(__main_task);             // strong 1→0→free
+    return 0;
+}
+```
+
+### キャンセル
+
+```c
+static inline void __task_cancel(MrylTask* t) {
+    if (!t) return;
+    if (t->state == MRYL_TASK_PENDING || t->state == MRYL_TASK_RUNNING) {
+        t->state = MRYL_TASK_CANCELLED;
+        if (t->on_cancel) t->on_cancel(t);       // カスタムコールバック
+        if (t->awaiter)  __scheduler_post(t->awaiter); // awaiter も再開
+    }
+}
+```
+
+awaiter は `MRYL_TASK_CANCELLED` を確認して結果をデフォルト値（`0` / `NULL`）とします。
+
+### 実装詳細
+
+| レイヤー | 実装 |
+|---------|------|
+| Lexer | `ASYNC`, `AWAIT` トークン |
+| Parser | `parse_async_function_decl()`, `parse_unary()` で `await` 処理 |
+| Ast | `FunctionDecl.is_async=True`, `AwaitExpr(expr)` |
+| TypeChecker | 非同期呼び出し → `Future<T>` 型。`await` → `T` 型に unwrap |
+| Interpreter | `asyncio.create_task()` + `loop.run_until_complete()` |
+| CodeGenerator | SM 構造体 + goto-dispatch + MrylTask + スケジューラ |
+
+gcc コマンドに `-lpthread` は**不要**です。
+
+---
+
+## 制御フロー
+
+### if-else-if-else チェーン
+
+```mryl
+if x > 10 {
+    println("big");
+} else if x > 5 {
+    println("medium");
+} else {
+    println("small");
+}
+```
+
+### while ループ
+
+```mryl
+let i = 0;
+while (i < 10) {
+    println(i);
+    i += 1;
+}
+```
+
+### for ループ (Rust 風)
+
+```mryl
+for i in 0..10 {
+    println(i);
+}
+
+let arr = [1, 2, 3];
+for x in arr {
+    println(x);
+}
+```
+
+### for ループ (C 風)
+
+```mryl
+for (let i = 0; i < 10; i++) {
+    println(i);
+}
+
+for (let i = 0; i < 10; i += 2) {
+    println(i);
+}
+```
+
+### return
+
+```mryl
+fn fact(n: i32) -> i32 {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * fact(n - 1);
+}
+```
+
+---
+
+## メモリ管理
+
+### MrylString 構造体
+
+```c
+typedef struct {
+    char* data;   // 文字列本体
+    int length;   // 文字列長
+} MrylString;
+```
+
+### 自動メモリクリーンアップ
+
+Mryl の文字列は自動的にメモリが解放されます：
+
+```mryl
+fn test() {
+    let s1 = "Hello";
+    let s2 = "World";
+    let result = s1 + s2;  // 自動的に MrylString_concat が呼ばれる
+    println(result);       // 関数終了時に自動で free_mryl_string が呼ばれる
+}
+```
+
+**実装フロー** (CodeGenerator):
+1. `_generate_let()` で StringLiteral を検出
+2. 一時変数 `__temp_str_0, __temp_str_1, ...` を生成
+3. `local_string_vars` に追加して追跡
+4. 関数終了時に `free_mryl_string()` を自動生成
+
+---
+
+## コンパイルパイプライン
+
+### Lexer (トークン化)
+
+**役割**: ソースコードを Token 列に変換
+
+```python
+tokens = [
+  Token(TokenKind.LET, "let", 1, 1),
+  Token(TokenKind.IDENT, "x", 1, 5),
+  Token(TokenKind.EQ, "=", 1, 7),
+  Token(TokenKind.NUMBER, "5", 1, 9),
+  Token(TokenKind.SEMICOLON, ";", 1, 10),
+  ...
+]
+```
+
+**演算子対応**: 新演算子用の TokenKind を定義
+- 論理: `TokenKind.AND`, `TokenKind.OR`, `TokenKind.NOT`
+- ビット: `TokenKind.AMPERSAND`, `TokenKind.PIPE`, `TokenKind.CARET`, `TokenKind.TILDE`, `TokenKind.LSHIFT`, `TokenKind.RSHIFT`
+- 複合代入: `TokenKind.PLUS_EQ`, 等
+
+### Parser (AST 構築)
+
+**役割**: Token 列を AST に変換
+
+**演算子優先順位実装**:
+```
+parse_expr() → parse_logical_or()
+parse_logical_or() → parse_logical_and()
+parse_logical_and() → parse_bitwise_or()
+parse_bitwise_or() → parse_bitwise_xor()
+parse_bitwise_xor() → parse_bitwise_and()
+parse_bitwise_and() → parse_equality()
+parse_equality() → parse_comparison()
+parse_comparison() → parse_shift()
+parse_shift() → parse_range()
+parse_range() → parse_term()
+parse_term() → parse_factor()
+parse_factor() → parse_unary()
+parse_unary() → parse_postfix()
+parse_postfix() → parse_primary()
+```
+
+**複合代入の処理**:
+```python
+# Parser で複合代入を検出して自動的に二項演算に変換
+if self.current.kind == TokenKind.PLUS_EQ:
+    self.advance()
+    value = self.parse_expr()
+    # n += 5 → n = (n + 5)
+    return Assignment(target, BinaryOp("+", target, value))
+```
+
+### TypeChecker (型チェック)
+
+**役割**: AST の全体の型安全性を確認
+
+**演算子型チェック**:
+```python
+def check_binary(self, expr: BinaryOp):
+    left = self.check_expr(expr.left)
+    right = self.check_expr(expr.right)
+    
+    # 論理演算: bool または numeric
+    if expr.op in ("&&", "||"):
+        if (is_numeric(left) or left == "bool") and \
+           (is_numeric(right) or right == "bool"):
+            return TypeNode("bool")
+    
+    # ビット演算: numeric のみ
+    if expr.op in ("&", "|", "^", "<<", ">>"):
+        if is_numeric(left) and is_numeric(right):
+            return find_common_numeric_type(left, right)
+```
+
+### Interpreter (Python インタプリタ)
+
+**役割**: Python で AST を実行（検証用）
+
+**ショートサーキット評価**:
+```python
+def eval_expr(self, expr):
+    if isinstance(expr, BinaryOp):
+        if expr.op == "&&":
+            left = self.eval_expr(expr.left)
+            if not self.is_truthy(left):
+                return False  # 右は評価されない！
+            right = self.eval_expr(expr.right)
+            return self.is_truthy(right)
+```
+
+### CodeGenerator (C コード生成)
+
+**役割**: AST を C コードに変換
+
+**演算子マッピング**:
+```
+Mryl              C
+────────────────────
+&&       →        &&
+||       →        ||
+!        →        !
+&        →        &
+|        →        |
+^        →        ^
+~        →        ~
+<<       →        <<
+>>       →        >>
+```
+
+**生成順序** (重要):
+```
+1. #include
+2. #define （const 定数）
+3. ビルトイン型定義（MrylString 等）
+4. ユーザー定義構造体
+5. ビルトイン関数（print, println 等）
+6. 非同期関数の args 構造体 + スレッドラッパー
+7. ラムダ static 関数 (__lambda_N)
+8. Forward declarations ← CRITICAL
+9. ユーザー定義関数（main() 含む）
+10. 単相化されたジェネリック関数
+```
+
+---
+
+## AST構造
+
+主要な AST ノード ([core/Ast.py](core/Ast.py)):
+
+```python
+class Program:
+    structs: list[StructDecl]
+    functions: list[FunctionDecl]
+
+class FunctionDecl:
+    name: str
+    type_params: list[str]     # ['T', 'U'] など
+    params: list[Param]
+    return_type: TypeNode
+    body: Block
+    is_async: bool             # async fn の場合 True
+
+class LetDecl(Statement):
+    name: str
+    type_node: Optional[TypeNode]
+    init_expr: Expression
+
+class Assignment(Statement):
+    target: Expression           # VarRef, ArrayAccess, StructAccess
+    expr: Expression
+
+class IfStmt(Statement):
+    condition: Expression
+    then_block: Block
+    else_block: Optional[Union[IfStmt, Block]]
+
+class ForStmt(Statement):
+    variable: str
+    iterable: Expression
+    condition: Optional[Expression]     # C-style のみ
+    update: Optional[Expression]        # C-style のみ
+    body: Block
+    is_c_style: bool
+
+class BinaryOp(Expression):
+    op: str          # '+', '-', '&&', '||', '&', '|', '^', '<<', '>>' など
+    left: Expression
+    right: Expression
+
+class UnaryOp(Expression):
+    op: str          # '-', '!', '~', '++', '--', 'post++', 'post--' など
+    operand: Expression
+
+class Lambda(Expression):
+    params: list[Param]        # 型注釈なしも可
+    body: Expression | Block   # 単一式またはブロック
+
+class AwaitExpr(Expression):
+    expr: Expression           # await 対象（Future<T> 型の式）
+```
+
+---
+
+## 拡張ガイド
+
+### 新しい演算子を追加する場合
+
+#### 1. Lexer.py に追加
+
+```python
+class TokenKind(Enum):
+    NEW_OP = auto()  # 新演算子
+
+# read_token() メソッドに認識ロジックを追加
+if ch == '@' and self.peek() == '@':
+    self.advance(); self.advance()
+    return Token(TokenKind.NEW_OP, "@@", line, col)
+```
+
+#### 2. Parser.py に追加
+
+```python
+# 優先順位に応じて適切なメソッドに追加
+def parse_new_precedence_level(self):
+    node = self.parse_higher_precedence()
+    while self.current.kind == TokenKind.NEW_OP:
+        op = self.current.value
+        self.advance()
+        right = self.parse_higher_precedence()
+        node = BinaryOp(op, node, right)
+    return node
+```
+
+#### 3. TypeChecker.py に追加
+
+```python
+def check_binary(self, expr: BinaryOp):
+    # ... 既存コード ...
+    if expr.op == "@@":
+        # 型チェックロジック
+        if some_condition:
+            return TypeNode("bool")
+```
+
+#### 4. Interpreter.py に追加
+
+```python
+def eval_binary(self, op, left, right):
+    # ... 既存コード ...
+    if op == "@@":
+        return left @@ right  # Python の演算に対応
+```
+
+#### 5. CodeGenerator.py に追加
+
+```python
+def _generate_expr(self, expr):
+    if isinstance(expr, BinaryOp):
+        # ... 既存コード ...
+        # C言語の対応演算子を指定
+        c_op_map = {
+            "@@": "some_c_function"  # 必要に応じて関数呼び出し
+        }
+```
+
+---
+
+## よくあるエラーと対処法
+
+### エラー: "Forward declaration missing"
+**原因**: CodeGenerator が main() の後に forward declaration を生成
+**対処**: `generate()` メソッドで順序確認（ステップ5がステップ6の前）
+
+### エラー: 演算子が認識されない
+**原因**: Lexer で TokenKind が定義されていない
+**対処**: TokenKind enum に新演算子を追加
+
+### エラー: 型チェック失敗
+**原因**: TypeChecker で演算子の型ルールが定義されていない
+**対処**: check_binary() または check_unary() に型チェック追加
+
+### エラー: C コンパイルエラー
+**原因**: CodeGenerator で生成された C コードが無効
+**対処**: `_generate_expr()` で正しい C 演算子にマップ
+
+---
+
+## 実行方法
+
+### 実行コマンド
+
+```bash
+cd c:\Repository\Mryl
+.venv\Scripts\python.exe core\Mryl.py tests\<ファイル名>.ml
+```
+
+### 依存関係
+
+**Python サードパーティパッケージは不要。** Python 3.9+ と GCC (Cygwin) だけが実行に必要です。
+
+| 標準モジュール | 用途 |
+|-----------|------|
+| `asyncio` | Python インタープリタモードでの async/await 実行 |
+| `subprocess` | GCC 呼び出しおよびネイティブバイナリ実行 |
+| `os` | パス操作・ファイル存在確認 |
+| `sys` | 標準入出力・終了コード制御 |
+| `enum` | `TokenKind` 列挙体の定義（Lexer） |
+| `datetime` | エラー出力のタイムスタンプ生成 |
+
+### 出力ファイル
+
+- `bin\Mryl.c` — 生成された C コード
+- `bin\Mryl.exe` — コンパイル済みバイナリ
+
+---
+
+## 環境要件
+
+| 項目 | バージョン | 用途 |
+|------|-----------|------|
+| **Python** | 3.9 以上 | インタープリタ実行・C コード生成 |
+| **GCC** (Cygwin) | 任意 | C ソースのコンパイルとネイティブ実行 |
+| **OS** | Windows | Cygwin GCC 経由でネイティブバイナリを生成 |
+
+Python 標準ライブラリのみを使用しているため、`pip install` は不要です。  
+詳細は「[実行方法](#実行方法)」セクションを参照してください。
+
+---
+
+## まとめ
+
+Mryl は以下の特徴を持つ、完全に機能するプログラミング言語です：
+
+✅ 静的型付けと型推論  
+✅ 完全な演算子セット（16 + 元々の8 = 24個）  
+✅ ジェネリック関数と構造体  
+✅ C コード生成によるネイティブ実行  
+✅ ショートサーキット評価  
+✅ 自動メモリ管理  
+✅ メソッド定義とメソッド呼び出し  
+✅ **ラムダ式** (`(x, y) => x + y` 型付き関数ポインタに変換)  
+✅ **async / await** (状態機械 + スケジューラ、MrylTask 参照カウント)  
+
+---
