@@ -629,6 +629,45 @@ fn main() {
 - **関数ポインタ型**：C コード生成時は型付き関数ポインタ (`int32_t (*f)(int32_t)`) に変換
 - **クロージャ**：Python インタプリタモードでは宣言時の環境をキャプチャ
 
+### async ラムダ式
+
+`async` キーワードをラムダ式の前に付けることで、**非同期ラムダ**を定義できます：
+
+```mryl
+fn main() {
+    // 戻り値なし async ラムダ
+    let greet = async (name: i32) => {
+        println(name);
+    };
+    await greet(42);
+
+    // await を内包する async ラムダ（async fn の結果を待機）
+    let compute = async (x: i32) => {
+        let result = await some_async_fn(x);
+        println(result);
+    };
+    await compute(10);
+}
+```
+
+**構文**：
+
+```
+async (パラメータリスト) => { ブロックボディ }
+```
+
+**特徴**：
+
+| 項目 | 内容 |
+|------|------|
+| 戻り値型 | `MrylTask*`（タスクハンドル） |
+| 呼び出し | `await 変数名(引数)` で待機・実行 |
+| `await` 内包 | ブロック内で `await` を使用して他の async 関数/ラムダ呼び出し可能 |
+| C コード生成 | 専用ステートマシン（SM）＋ファクトリ関数として展開 |
+| Python モード | `asyncio.create_task()` でコルーチンとして実行 |
+
+> **注意**：async ラムダはブロックボディ `{ }` のみサポートします。単一式ボディ（`async (x) => x * 2`）は使用できません。
+
 ---
 
 ## async / await

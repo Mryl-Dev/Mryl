@@ -32,6 +32,8 @@ class CodeGenerator:
         self.const_table = {}               # Const values for code generation
         self.lambda_counter = 0             # ラムダ関数の連番カウンタ
         self.pending_lambdas = []           # List of (name, ret_type, params_str, body_lines, captures)
+        self.pending_async_lambda_blocks = []  # List of raw C line lists for async lambda SMs
+        self.async_lambda_factories = {}    # {var_name: factory_c_name} async ラムダ変数→ファクトリ関数名
         self.sm_mode = False                # ステートマシン生成モードのフラグ
         self.sm_vars = set()                # SM 内変数名のセット
         self.sm_await_handles = {}          # await_index -> handle_field_name (inline FunctionCall await 用)
@@ -48,6 +50,8 @@ class CodeGenerator:
         self.structs = program.structs      # 構造体リストをキャッシュ
         self.lambda_counter = 0             # ラムダ連番カウンタをリセット
         self.pending_lambdas = []           # List of (name, ret_type, params_str, body_lines, captures)
+        self.pending_async_lambda_blocks = []  # async lambda SM の生 C コード行リスト
+        self.async_lambda_factories = {}    # {var_name: factory_c_name}
         self.loop_counter = 0               # ループカウンタをリセット
         self.array_sizes = {}               # 変数名 → 配列サイズのマップ
         self.vec_var_types = {}             # 変数名 → 動的配列の要素型名 (e.g. "i32")
@@ -137,9 +141,17 @@ class CodeGenerator:
 
         # Phase 5: Insert pending lambda static functions before any function that uses them.
         # Find the first function definition line and insert lambdas just before it.
-        if self.pending_lambdas:
+        if self.pending_lambdas or self.pending_async_lambda_blocks:
             lambda_lines = []
-            lambda_lines.append("// ===== Lambda static helper functions =====")
+            # Async lambda SM blocks first (struct + move_next + factory)
+            if self.pending_async_lambda_blocks:
+                lambda_lines.append("// ===== Async Lambda state machines =====")
+                for block_lines in self.pending_async_lambda_blocks:
+                    lambda_lines.extend(block_lines)
+                self.pending_async_lambda_blocks = []
+            # Sync lambda static helper functions
+            if self.pending_lambdas:
+                lambda_lines.append("// ===== Lambda static helper functions =====")
             for (lam_name, ret_type, params_str, body_lines, captures) in self.pending_lambdas:
                 if captures:
                     # クロージャ: env 構造体と closure_t 型を出力
@@ -565,10 +577,20 @@ class CodeGenerator:
             self._emit("")
 
     def _emit_pending_lambdas_at(self, insert_pos):
-        """pending_lambdas を insert_pos に挿入して pending を空にする"""
-        if not self.pending_lambdas:
+        """pending_lambdas と pending_async_lambda_blocks を insert_pos に挿入して pending を空にする"""
+        if not self.pending_lambdas and not self.pending_async_lambda_blocks:
             return
         lambda_lines = []
+        # Async lambda SM blocks first
+        if self.pending_async_lambda_blocks:
+            lambda_lines.append("// ===== Async Lambda state machines =====")
+            for block_lines in self.pending_async_lambda_blocks:
+                lambda_lines.extend(block_lines)
+            self.pending_async_lambda_blocks = []
+        if not self.pending_lambdas:
+            for i, ln in enumerate(lambda_lines):
+                self.code.insert(insert_pos + i, ln)
+            return
         for (lam_name, ret_type, params_str, body_lines, captures) in self.pending_lambdas:
             if captures:
                 env_struct = f"{lam_name}_env_t"
@@ -600,9 +622,13 @@ class CodeGenerator:
 
         # async fn または body に await を含む fn はステートマシン生成へ
         if getattr(func, 'is_async', False) or self._body_has_await(func.body):
+            # Record insert pos BEFORE SM code so async lambdas land before the SM
+            func_insert_pos = len(self.code)
             self._generate_async_state_machine(func)
             self.env.pop()
             self.ident_renames = saved_renames
+            # Flush any async lambda SM blocks generated during SM processing
+            self._emit_pending_lambdas_at(func_insert_pos)
             return
 
         # ラムダ挿入位置を記録（この関数定義の直前）
@@ -757,7 +783,12 @@ class CodeGenerator:
                 self.closure_env_types[stmt.name] = lam_name
             else:
                 self._emit(f"{ret_type} (*{c_var_name})({params_str}) = {lam_name};")
-                self.env[-1][stmt.name] = "fn"
+                if ret_type == "MrylTask*":
+                    # async lambda: mark as async_fn so SM/call-gen can distinguish
+                    self.env[-1][stmt.name] = "async_fn"
+                    self.async_lambda_factories[stmt.name] = lam_name
+                else:
+                    self.env[-1][stmt.name] = "fn"
             return
 
         # FunctionCall の引数に StringLiteral がある場合の前処理 (temp 変数化)
@@ -1249,6 +1280,11 @@ class CodeGenerator:
 
         # Check if name is a lambda variable in scope (function pointer or closure call)
         for scope in reversed(self.env):
+            if expr.name in scope and scope[expr.name] == "async_fn":
+                # async lambda: call the factory function directly by name
+                factory = self.async_lambda_factories.get(expr.name, expr.name)
+                args = ", ".join(self._generate_expr(arg) for arg in expr.args)
+                return f"{factory}({args})"
             if expr.name in scope and scope[expr.name] == "fn":
                 c_name = self.ident_renames.get(expr.name, _safe_c_name(expr.name))
                 args = ", ".join(self._generate_expr(arg) for arg in expr.args)
@@ -1634,12 +1670,77 @@ class CodeGenerator:
         return captures
 
     # ============================================================
+    # Async Lambda: (params) => { block } をステートマシンに変換
+    # ============================================================
+    def _generate_async_lambda(self, expr, lam_name: str) -> str:
+        """async lambda の状態機械 C コードを生成して pending_async_lambda_blocks に追加する。
+        戻り値はファクトリ関数名 (MrylTask* lam_name(params)) 。"""
+        # Body must be a Block
+        if isinstance(expr.body, Block):
+            body_block = expr.body
+        else:
+            body_block = Block([ExprStmt(expr.body)])
+
+        inferred = getattr(expr, 'inferred_return_type', None)
+        ret_type_node = inferred if inferred else TypeNode("void")
+
+        synth_func = FunctionDecl(
+            name=lam_name,
+            params=expr.params,
+            return_type=ret_type_node,
+            body=body_block,
+            is_async=True,
+        )
+
+        # Redirect output to capture all SM lines (save all mutable code-gen state)
+        saved_code = self.code
+        saved_indent = self.indent_level
+        saved_sm_mode = self.sm_mode
+        saved_sm_vars = self.sm_vars
+        saved_sm_await_handles = getattr(self, 'sm_await_handles', {})
+        saved_lambda_counter = self.lambda_counter
+        saved_capture_map = dict(self.capture_map)
+        saved_ident_renames = dict(self.ident_renames)
+        saved_return_type = self.current_return_type
+        self.code = []
+        self.indent_level = 0
+        self.capture_map = {}
+        self.ident_renames = {}
+
+        # Push a scope with param type info for SM generation
+        self.env.append({})
+        for p in expr.params:
+            ptype_name = p.type_node.name if p.type_node else 'i32'
+            self.env[-1][p.name] = ptype_name
+
+        self._generate_async_state_machine(synth_func)
+        self.env.pop()
+
+        async_lines = self.code
+        self.code = saved_code
+        self.indent_level = saved_indent
+        self.sm_mode = saved_sm_mode
+        self.sm_vars = saved_sm_vars
+        self.sm_await_handles = saved_sm_await_handles
+        # Keep lambda_counter incremented (sub-SM may have created new __lambda_N names)
+        self.capture_map = saved_capture_map
+        self.ident_renames = saved_ident_renames
+        self.current_return_type = saved_return_type
+
+        self.pending_async_lambda_blocks.append(async_lines)
+        return lam_name  # factory function: MrylTask* lam_name(params)
+
+    # ============================================================
     # Lambda: (params) => body を static helper function に変換
     # ============================================================
     def _generate_lambda(self, expr) -> str:
         """(Implementation detail)"""
         lam_name = f"__lambda_{self.lambda_counter}"
         self.lambda_counter += 1
+
+        # Async lambda: generate state machine
+        if getattr(expr, 'is_async', False):
+            return self._generate_async_lambda(expr, lam_name)
 
         param_names = {p.name for p in expr.params}
         captures = self._collect_captures(expr.body, param_names)
@@ -1691,6 +1792,16 @@ class CodeGenerator:
         """(Implementation detail)"""
         lam_name = f"__lambda_{self.lambda_counter}"
         self.lambda_counter += 1
+
+        # Async lambda: generate state machine, return factory info
+        if getattr(expr, 'is_async', False):
+            self._generate_async_lambda(expr, lam_name)
+            params_c = []
+            for p in expr.params:
+                ptype = self._type_to_c(p.type_node) if p.type_node else "int32_t"
+                params_c.append(f"{ptype} {p.name}")
+            params_str = ", ".join(params_c) if params_c else "void"
+            return lam_name, "MrylTask*", params_str, {}
 
         param_names = {p.name for p in expr.params}
         captures = self._collect_captures(expr.body, param_names)
@@ -1764,10 +1875,16 @@ class CodeGenerator:
     def _sm_let_c_type(self, stmt) -> str:
         """(Implementation detail)"""
         init_cls = stmt.init_expr.__class__.__name__ if stmt.init_expr else None
+        if init_cls == 'Lambda':
+            return 'void*'  # lambda function pointer stored as void* in SM struct
         if init_cls == 'FunctionCall':
             f = self.program_functions.get(stmt.init_expr.name)
             if f and getattr(f, 'is_async', False):
                 return 'MrylTask*'
+            # Check if it's a call to an async lambda variable
+            for scope in reversed(self.env):
+                if stmt.init_expr.name in scope and scope[stmt.init_expr.name] == 'async_fn':
+                    return 'MrylTask*'
         if init_cls == 'AwaitExpr' and stmt.type_node:
             return self._type_to_c(stmt.type_node)
         if stmt.type_node:
@@ -1961,13 +2078,33 @@ class CodeGenerator:
         cls = stmt.__class__.__name__
         if cls == 'LetDecl':
             init_cls = stmt.init_expr.__class__.__name__ if stmt.init_expr else None
+            # Lambda expression LetDecl: store function pointer as void* in SM struct
+            if init_cls == 'Lambda':
+                lam_func = self._generate_expr(stmt.init_expr)  # triggers lambda generation
+                self._emit(f"__sm->{stmt.name} = (void*){lam_func};")
+                # Register async lambda factory in env so later calls work
+                if getattr(stmt.init_expr, 'is_async', False):
+                    self.env[-1][stmt.name] = "async_fn"
+                    self.async_lambda_factories[stmt.name] = lam_func
+                else:
+                    self.env[-1][stmt.name] = "fn"
+                return
             if init_cls == 'FunctionCall':
                 f = self.program_functions.get(stmt.init_expr.name)
-                if f and getattr(f, 'is_async', False):
-                    # async 関数呼び出しは SM タスクを生成して retain
+                # Check async named function
+                is_async_call = f and getattr(f, 'is_async', False)
+                # Check async lambda variable call
+                if not is_async_call:
+                    for scope in reversed(self.env):
+                        if stmt.init_expr.name in scope and scope[stmt.init_expr.name] == 'async_fn':
+                            is_async_call = True
+                            break
+                if is_async_call:
+                    # async 関数/ラムダ呼び出しは SM タスクを生成して retain
                     args = [self._generate_expr(a) for a in stmt.init_expr.args]
                     args_str = ", ".join(args)
-                    self._emit(f"__sm->{stmt.name} = {stmt.init_expr.name}({args_str});")
+                    call_target = self.async_lambda_factories.get(stmt.init_expr.name, stmt.init_expr.name)
+                    self._emit(f"__sm->{stmt.name} = {call_target}({args_str});")
                     self._emit(f"__task_retain(__sm->{stmt.name});")
                     return
             # 通常の let は SM フィールドに代入

@@ -1025,6 +1025,15 @@ class Parser:
             expr.column = col
             return expr
 
+        if tok.kind == TokenKind.ASYNC:
+            # async (params) => body  → async lambda
+            next_pos = self.pos + 1
+            if next_pos < len(self.tokens) and self.tokens[next_pos].kind == TokenKind.LPAREN:
+                self.advance()  # consume ASYNC, current is now LPAREN
+                if self._is_lambda_start():
+                    return self.parse_lambda(is_async=True)
+            raise SyntaxError_("Unexpected 'async' outside of async lambda or async fn", tok)
+
         if tok.kind == TokenKind.IDENT:
             return self.parse_ident_primary()
 
@@ -1084,8 +1093,8 @@ class Parser:
             self.pos = saved_pos
             self.current = self.tokens[saved_pos]
 
-    def parse_lambda(self):
-        """Parse: (params) => expr  or  (params) => { block }"""
+    def parse_lambda(self, is_async: bool = False):
+        """Parse: (params) => expr  or  (params) => { block }  or  async (params) => { block }"""
         tok = self.current
         line, col = tok.line, tok.column
         self.expect(TokenKind.LPAREN)
@@ -1118,7 +1127,7 @@ class Parser:
         else:
             body = self.parse_expr()
 
-        return Lambda(params, body, line, col)
+        return Lambda(params, body, is_async, line, col)
 
     # ============================================================
     # Identifier primary: function calls, field access, struct init

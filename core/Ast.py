@@ -270,11 +270,12 @@ class Range(Expr):
         self.inclusive = inclusive      # True for ..= (inclusive), False for .. (exclusive)
 
 class Lambda(Expr):
-    """Anonymous function expression: (params) => body"""
-    def __init__(self, params, body, line=None, column=None):
+    """Anonymous function expression: (params) => body  or  async (params) => body"""
+    def __init__(self, params, body, is_async=False, line=None, column=None):
         super().__init__(line, column)
         self.params = params   # list of Param (type_node may be None)
         self.body = body       # Expression or Block
+        self.is_async = is_async  # True for async lambda
 
 class AwaitExpr(Expr):
     """Await expression: await expr"""

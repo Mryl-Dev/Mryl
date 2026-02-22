@@ -3,8 +3,9 @@
 | 項目 | 内容 |
 |------|------|
 | 文書番号 | MRYL-UT-001 |
-| 版数 | 1.0 |
+| 版数 | 1.1 |
 | 作成日 | 2026-02-21 |
+| 更新日 | 2026-02-22 |
 | 対象バージョン | Mryl 言語実装 (Python Interpreter + C CodeGenerator) |
 | テスト環境 | Windows / Python 3.x / GCC (Cygwin) / Claude Sonnet 4.6 |
 
@@ -44,6 +45,7 @@ Mryl 言語インタープリタおよび C コードジェネレータに対し
 | `tests/test_13_boundary_numeric.ml` | 数値型境界値試験 | 境界値分析 |
 | `tests/test_14_branch_coverage.ml` | 条件分岐網羅試験 | C0 / C1 / MC/DC |
 | `tests/test_15_loop_boundary.ml` | ループ境界値試験 | C0 / C1 / 境界値分析 |
+| `tests/test_16_async_lambda.ml` | async ラムダ式試験 | C0 / 機能確認 |
 
 ---
 
@@ -244,14 +246,44 @@ fn logic_or(a: i32, b: i32) -> bool
 
 ---
 
+### 4.4 async ラムダ式試験（test_16）
+
+`async (params) => { block }` の定義・呼び出し・await 待機をテストします。
+
+#### 4.4.1 async ラムダ（ボディ内 await なし）
+
+| TID | 観点 | 入力 | 期待出力 | C0 |
+|-----|------|------|----------|-----|
+| T16-01 | void async ラムダの定義と呼び出し | `greet(42)` | `42` | ✅ |
+| T16-03 | 同ラムダの複数回呼び出し | `greet(100)` | `100` | ✅ |
+
+#### 4.4.2 async ラムダ（ボディ内 await あり）
+
+| TID | 観点 | 入力 | 期待出力 | C0 |
+|-----|------|------|----------|-----|
+| T16-02 | async fn を await する async ラムダ | `compute(5)` → `double_value(5)` | `10` | ✅ |
+| T16-04 | 同ラムダの複数回呼び出し | `compute(10)` → `double_value(10)` | `20` | ✅ |
+
+**全体期待出力順**：
+
+```
+42
+10
+100
+20
+```
+
+---
+
 ## 5. カバレッジ達成目標
 
 | 基準 | 目標 | 対象テスト |
 |------|------|-----------|
-| C0（命令網羅） | 100% | test_13, test_14, test_15 の全文実行 |
+| C0（命令網羅） | 100% | test_13, test_14, test_15, test_16 の全文実行 |
 | C1（分岐網羅） | 100% | test_14, test_15 の全 if/while 真偽 |
 | MC/DC | &&, \|\| 全複合条件 | test_14 (T14-08〜T14-16) |
 | 境界値網羅 | 実施可能な型の全境界 | test_13 全項目 |
+| 機能確認 | async ラムダ全パターン | test_16 全項目 |
 
 ---
 
@@ -304,6 +336,7 @@ fn logic_or(a: i32, b: i32) -> bool
 | test_13_boundary_numeric.ml | ✅ PASS | ✅ PASS | ✅ PASS | i64 Native は %d 制限で 1410065407（§6.2 既知制約・SKIP 扱い） |
 | test_14_branch_coverage.ml | ✅ PASS | ✅ PASS | ✅ PASS | MC/DC 全パス（&&/\|\|）確認済み |
 | test_15_loop_boundary.ml | ✅ PASS | ✅ PASS | ✅ PASS | 0回/1回/N回境界・break/continue 確認済み |
+| test_16_async_lambda.ml | ✅ PASS | ✅ PASS | ✅ PASS | async ラムダ（void/await あり）・複数回呼び出し確認済み |
 
 ---
 

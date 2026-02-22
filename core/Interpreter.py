@@ -283,12 +283,29 @@ class Interpreter:
         params = closure['params']
         body = closure['body']
         captured_env = [dict(scope) for scope in closure['captured_env']]
+        is_async = closure.get('is_async', False)
 
         # Create a new scope for lambda params (on top of captured env)
         new_scope = {}
         for param, arg_value in zip(params, args):
             new_scope[param.name] = arg_value
         captured_env.append(new_scope)
+
+        # Async lambda: run body as asyncio coroutine and return a Future
+        if is_async:
+            async def _run_async_lambda(env=captured_env, b=body):
+                try:
+                    self.exec_block(b, env)
+                except ReturnSignal as rs:
+                    return rs.value
+                return None
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            task = loop.create_task(_run_async_lambda())
+            return {'__future__': True, 'task': task, 'loop': loop}
 
         if isinstance(body, Block):
             try:
@@ -833,6 +850,7 @@ class Interpreter:
                 '__lambda__': True,
                 'params': expr.params,
                 'body': expr.body,
+                'is_async': getattr(expr, 'is_async', False),
                 'captured_env': captured_env,
             }
 

@@ -137,10 +137,12 @@ Mryl/
 |------|------|
 | `(パラメータ) => 式` | 単一式ボディのラムダ式 |
 | `(パラメータ) => { 文; ... }` | 複数ステートメントを持つブロックボディのラムダ式 |
+| `async (パラメータ) => { 文; ... }` | async ラムダ式（`MrylTask*` を返す） |
 | 型注釈対応 | パラメータに `: T` で型を指定可能 |
 | `fn` 型 | 演算が展開する内部型 (`fn(i32)->i32` 等) |
 | ブロックボディの戻り値型 | `return` 文なし → `void`、あり → 式の型を自動推論 |
-| C コード生成 | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
+| C コード生成（同期） | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
+| C コード生成（async） | SM 構造体 + `move_next` 関数 + ファクトリ関数として展開 |
 
 ### 3.4 async / await
 
@@ -646,6 +648,73 @@ int main(void) {
 ### Python インタプリタでの動作
 
 クロージャとして実装 — 宣言時点の環境をキャプチャした辞書 `{'__lambda__': True, 'params', 'body', 'captured_env'}` として保存。
+
+### async ラムダ式
+
+`async` キーワードを付けて宣言する非同期ラムダ式です。
+
+**構文**：
+
+```mryl
+let 変数名 = async (パラメータ: 型) => {
+    // 非同期ボディ（await を内包可能）
+};
+await 変数名(引数);
+```
+
+**使用例**（ボディ内 await なし）：
+
+```mryl
+fn main() {
+    let greet = async (x: i32) => {
+        println(x);
+    };
+    await greet(42);       // 42
+}
+```
+
+**使用例**（ボディ内 await あり）：
+
+```mryl
+async fn double(n: i32) -> i32 {
+    return n * 2;
+}
+
+fn main() {
+    let compute = async (x: i32) => {
+        let result = await double(x);
+        println(result);
+    };
+    await compute(5);      // 10
+}
+```
+
+**C コード生成**：
+
+async ラムダは `async fn` と同様にステートマシン（SM）として展開されます：
+
+```c
+// ===== Async Lambda state machines =====
+typedef struct { int state; int32_t x; } __lambda_0_sm_t;
+static int __lambda_0_move_next(__lambda_0_sm_t* sm, MrylTask* task) { ... }
+static MrylTask* __lambda_0_factory(int32_t x) { ... }
+
+int main(void) {
+    MrylTask* (*greet)(int32_t) = __lambda_0_factory;
+    MrylTask* __h0 = greet(42);
+    mryl_scheduler_run();
+}
+```
+
+**特徴**：
+
+| 項目 | 内容 |
+|------|------|
+| 戻り値型 | `MrylTask*` |
+| 呼び出し方法 | `await 変数(引数)` で待機・実行 |
+| ボディ内 await | `await` を使用して他の async 関数/ラムダを待機可能 |
+| 制限 | ブロックボディ `{ }` のみサポート（単一式ボディ不可） |
+| Python モード | `asyncio.create_task()` でコルーチンとして実行 |
 
 ---
 
