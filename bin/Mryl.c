@@ -164,392 +164,103 @@ MrylString to_string(int32_t n) {
     return make_mryl_string(buf);
 }
 
-// === State machine for square ===
-typedef struct {
-    int __state;
-    int32_t n;
-    MrylTask* __task;
-} __Square_SM;
-
-void __square_move_next(MrylTask* __task) {
-    __Square_SM* __sm = (__Square_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        default: return;
-    }
-    __state_0: {
-        int32_t* __res = (int32_t*)malloc(sizeof(int32_t));
-        *__res = (__sm->n * __sm->n);
-        __task->result = (void*)__res;
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* square(int32_t n) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Square_SM* __sm = (__Square_SM*)malloc(sizeof(__Square_SM));
-    memset(__sm, 0, sizeof(__Square_SM));
-    __sm->n = n;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = __square_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for add_async ===
-typedef struct {
-    int __state;
-    int32_t a;
-    int32_t b;
-    MrylTask* __task;
-} __AddAsync_SM;
-
-void __add_async_move_next(MrylTask* __task) {
-    __AddAsync_SM* __sm = (__AddAsync_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        default: return;
-    }
-    __state_0: {
-        int32_t* __res = (int32_t*)malloc(sizeof(int32_t));
-        *__res = (__sm->a + __sm->b);
-        __task->result = (void*)__res;
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* add_async(int32_t a, int32_t b) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __AddAsync_SM* __sm = (__AddAsync_SM*)malloc(sizeof(__AddAsync_SM));
-    memset(__sm, 0, sizeof(__AddAsync_SM));
-    __sm->a = a;
-    __sm->b = b;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = __add_async_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for greet ===
-typedef struct {
-    int __state;
-    MrylString name;
-    MrylTask* __task;
-} __Greet_SM;
-
-void __greet_move_next(MrylTask* __task) {
-    __Greet_SM* __sm = (__Greet_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        default: return;
-    }
-    __state_0: {
-        println("Hello, %s!", __sm->name.data);
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* greet(MrylString name) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Greet_SM* __sm = (__Greet_SM*)malloc(sizeof(__Greet_SM));
-    memset(__sm, 0, sizeof(__Greet_SM));
-    __sm->name = name;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = __greet_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for chain ===
-typedef struct {
-    int __state;
-    int32_t x;
-    int32_t a;
-    int32_t b;
-    MrylTask* __h_0;
-    MrylTask* __h_1;
-    MrylTask* __task;
-} __Chain_SM;
-
-void __chain_move_next(MrylTask* __task) {
-    __Chain_SM* __sm = (__Chain_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        case 1: goto __state_1;
-        case 2: goto __state_2;
-        default: return;
-    }
-    __state_0: {
-        __sm->__h_0 = square(__sm->x);
-        __task_retain(__sm->__h_0);
-        __sm->__h_0->awaiter = __task;
-        if (__sm->__h_0->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 1;
-            return;
-        }
-        goto __state_1;
-    }
-    __state_1: {
-        if (__sm->__h_0->state == MRYL_TASK_CANCELLED) {
-            __sm->a = 0;
-        } else {
-            __sm->a = *(int32_t*)__sm->__h_0->result;
-        }
-        __task_release(__sm->__h_0);
-        __sm->__h_1 = add_async(__sm->a, 1);
-        __task_retain(__sm->__h_1);
-        __sm->__h_1->awaiter = __task;
-        if (__sm->__h_1->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 2;
-            return;
-        }
-        goto __state_2;
-    }
-    __state_2: {
-        if (__sm->__h_1->state == MRYL_TASK_CANCELLED) {
-            __sm->b = 0;
-        } else {
-            __sm->b = *(int32_t*)__sm->__h_1->result;
-        }
-        __task_release(__sm->__h_1);
-        int32_t* __res = (int32_t*)malloc(sizeof(int32_t));
-        *__res = __sm->b;
-        __task->result = (void*)__res;
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* chain(int32_t x) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Chain_SM* __sm = (__Chain_SM*)malloc(sizeof(__Chain_SM));
-    memset(__sm, 0, sizeof(__Chain_SM));
-    __sm->x = x;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = __chain_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for main ===
-typedef struct {
-    int __state;
-    MrylTask* h1;
-    int32_t r1;
-    MrylTask* h2;
-    int32_t r2;
-    MrylTask* h3;
-    MrylTask* h4;
-    int32_t r4;
-    MrylTask* h5;
-    int32_t r5;
-    MrylTask* h6;
-    int32_t r6;
-    MrylTask* h7;
-    int32_t r7;
-    MrylTask* __task;
-} __Main_SM;
-
-void __main_move_next(MrylTask* __task) {
-    __Main_SM* __sm = (__Main_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        case 1: goto __state_1;
-        case 2: goto __state_2;
-        case 3: goto __state_3;
-        case 4: goto __state_4;
-        case 5: goto __state_5;
-        case 6: goto __state_6;
-        case 7: goto __state_7;
-        default: return;
-    }
-    __state_0: {
-        println("=== 10: async/await ===");
-        println("--- square ---");
-        __sm->h1 = square(7);
-        __task_retain(__sm->h1);
-        __sm->h1->awaiter = __task;
-        if (__sm->h1->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 1;
-            return;
-        }
-        goto __state_1;
-    }
-    __state_1: {
-        if (__sm->h1->state == MRYL_TASK_CANCELLED) {
-            __sm->r1 = 0;
-        } else {
-            __sm->r1 = *(int32_t*)__sm->h1->result;
-        }
-        __task_release(__sm->h1);
-        println("square(7)=%d", __sm->r1);
-        __sm->h2 = square(5);
-        __task_retain(__sm->h2);
-        __sm->h2->awaiter = __task;
-        if (__sm->h2->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 2;
-            return;
-        }
-        goto __state_2;
-    }
-    __state_2: {
-        if (__sm->h2->state == MRYL_TASK_CANCELLED) {
-            __sm->r2 = 0;
-        } else {
-            __sm->r2 = *(int32_t*)__sm->h2->result;
-        }
-        __task_release(__sm->h2);
-        println("square(5)=%d", __sm->r2);
-        println("--- void async ---");
-        __sm->h3 = greet(make_mryl_string("Mryl"));
-        __task_retain(__sm->h3);
-        __sm->h3->awaiter = __task;
-        if (__sm->h3->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 3;
-            return;
-        }
-        goto __state_3;
-    }
-    __state_3: {
-        __task_release(__sm->h3);
-        println("--- add_async ---");
-        __sm->h4 = add_async(10, 20);
-        __task_retain(__sm->h4);
-        __sm->h4->awaiter = __task;
-        if (__sm->h4->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 4;
-            return;
-        }
-        goto __state_4;
-    }
-    __state_4: {
-        if (__sm->h4->state == MRYL_TASK_CANCELLED) {
-            __sm->r4 = 0;
-        } else {
-            __sm->r4 = *(int32_t*)__sm->h4->result;
-        }
-        __task_release(__sm->h4);
-        println("add(10,20)=%d", __sm->r4);
-        __sm->h5 = add_async(100, 200);
-        __task_retain(__sm->h5);
-        __sm->h5->awaiter = __task;
-        if (__sm->h5->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 5;
-            return;
-        }
-        goto __state_5;
-    }
-    __state_5: {
-        if (__sm->h5->state == MRYL_TASK_CANCELLED) {
-            __sm->r5 = 0;
-        } else {
-            __sm->r5 = *(int32_t*)__sm->h5->result;
-        }
-        __task_release(__sm->h5);
-        println("add(100,200)=%d", __sm->r5);
-        println("--- chain ---");
-        __sm->h6 = chain(3);
-        __task_retain(__sm->h6);
-        __sm->h6->awaiter = __task;
-        if (__sm->h6->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 6;
-            return;
-        }
-        goto __state_6;
-    }
-    __state_6: {
-        if (__sm->h6->state == MRYL_TASK_CANCELLED) {
-            __sm->r6 = 0;
-        } else {
-            __sm->r6 = *(int32_t*)__sm->h6->result;
-        }
-        __task_release(__sm->h6);
-        println("chain(3)=%d", __sm->r6);
-        __sm->h7 = chain(4);
-        __task_retain(__sm->h7);
-        __sm->h7->awaiter = __task;
-        if (__sm->h7->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 7;
-            return;
-        }
-        goto __state_7;
-    }
-    __state_7: {
-        if (__sm->h7->state == MRYL_TASK_CANCELLED) {
-            __sm->r7 = 0;
-        } else {
-            __sm->r7 = *(int32_t*)__sm->h7->result;
-        }
-        __task_release(__sm->h7);
-        println("chain(4)=%d", __sm->r7);
-        println("=== OK ===");
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
 int main(void) {
-    __scheduler_init();
-    MrylTask* __main_task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Main_SM* __main_sm = (__Main_SM*)malloc(sizeof(__Main_SM));
-    memset(__main_sm, 0, sizeof(__Main_SM));
-    __main_sm->__task  = __main_task;
-    __main_task->strong_count = 2;
-    __main_task->weak_count   = 0;
-    __main_task->state        = MRYL_TASK_PENDING;
-    __main_task->result       = NULL;
-    __main_task->move_next    = __main_move_next;
-    __main_task->on_cancel    = NULL;
-    __main_task->awaiter      = NULL;
-    __main_task->sm           = __main_sm;
-    __scheduler_post(__main_task);
-    __scheduler_run();
-    __task_release(__main_task);
+    println("=== 15: Loop Boundary Tests ===");
+    println("--- while ---");
+    int32_t w0 = 0;
+    int32_t wi0 = 0;
+    while (wi0 < 0) {
+        w0 = (w0 + wi0);
+        wi0++;
+    }
+    println("while_0iter_sum=%d", w0);
+    int32_t w1 = 0;
+    int32_t wi1 = 0;
+    while (wi1 < 1) {
+        w1 = (w1 + wi1);
+        wi1++;
+    }
+    println("while_1iter_sum=%d", w1);
+    int32_t w5 = 0;
+    int32_t wi5 = 0;
+    while (wi5 < 5) {
+        w5 = (w5 + wi5);
+        wi5++;
+    }
+    println("while_5iter_sum=%d", w5);
+    int32_t w10 = 0;
+    int32_t wi10 = 0;
+    while (wi10 < 10) {
+        w10 = (w10 + wi10);
+        wi10++;
+    }
+    println("while_10iter_sum=%d", w10);
+    println("--- for range ---");
+    int32_t fr0 = 0;
+    for (int _n0 = 0; _n0 < 0; _n0++) {
+        fr0 = (fr0 + 1);
+    }
+    println("range_0iter_count=%d", fr0);
+    int32_t fr1 = 0;
+    for (int _n1 = 0; _n1 < 1; _n1++) {
+        fr1 = (fr1 + 1);
+    }
+    println("range_1iter_count=%d", fr1);
+    int32_t fr5 = 0;
+    for (int _n5 = 0; _n5 < 5; _n5++) {
+        fr5 = (fr5 + 1);
+    }
+    println("range_5iter_count=%d", fr5);
+    int32_t fr5s = 0;
+    for (int ns = 0; ns < 5; ns++) {
+        fr5s = (fr5s + ns);
+    }
+    println("range_5iter_sum=%d", fr5s);
+    println("--- for C-style ---");
+    int32_t fc0 = 0;
+    for (int32_t j0 = 0; j0 < 0; j0++) {
+        fc0 = (fc0 + 1);
+    }
+    println("cfor_0iter_count=%d", fc0);
+    int32_t fc1 = 0;
+    for (int32_t j1 = 0; j1 < 1; j1++) {
+        fc1 = (fc1 + 1);
+    }
+    println("cfor_1iter_count=%d", fc1);
+    int32_t fc_last = (-1);
+    for (int32_t j2 = 0; j2 <= 8; j2 = (j2 + 2)) {
+        fc_last = j2;
+    }
+    println("cfor_step2_last=%d", fc_last);
+    println("--- break ---");
+    int32_t br_last = (-1);
+    for (int nb = 0; nb < 10; nb++) {
+        if (nb == 3) {
+            break;
+        }
+        br_last = nb;
+    }
+    println("break_last=%d", br_last);
+    int32_t br0 = 0;
+    for (int nb0 = 0; nb0 < 10; nb0++) {
+        if (nb0 == 0) {
+            break;
+        }
+        br0 = (br0 + 1);
+    }
+    println("break_0iter_count=%d", br0);
+    println("--- continue ---");
+    int32_t cont = 0;
+    int32_t cont_last = (-1);
+    for (int nc = 0; nc < 5; nc++) {
+        if ((nc % 2) == 0) {
+            continue;
+        }
+        cont = (cont + 1);
+        cont_last = nc;
+    }
+    println("continue_odd_count=%d", cont);
+    println("continue_last=%d", cont_last);
+    println("=== OK ===");
     return 0;
 }

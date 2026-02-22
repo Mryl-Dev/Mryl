@@ -585,13 +585,20 @@ class TypeChecker:
 
         # Check body
         if isinstance(expr.body, Block):
-            # For block body, check each statement; return type not enforced here
+            # For block body, check each statement and infer return type from return stmts
+            inferred_rt = None
             for stmt in expr.body.statements:
                 try:
                     self.check_statement(stmt, None)
                 except Exception:
                     pass
-            return_type = TypeNode("void")
+                if stmt.__class__.__name__ == 'ReturnStmt' and stmt.expr is not None:
+                    if inferred_rt is None:
+                        try:
+                            inferred_rt = self.check_expr(stmt.expr)
+                        except Exception:
+                            pass
+            return_type = inferred_rt if inferred_rt is not None else TypeNode("void")
         else:
             try:
                 return_type = self.check_expr(expr.body)

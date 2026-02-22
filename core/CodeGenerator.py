@@ -1666,7 +1666,12 @@ class CodeGenerator:
         if isinstance(expr.body, Block):
             for stmt in expr.body.statements:
                 self._generate_statement(stmt)
-            ret_type = "void"
+            # Use return type inferred by TypeChecker if available and not void
+            inferred = getattr(expr, 'inferred_return_type', None)
+            if inferred and inferred.name != 'void':
+                ret_type = self._type_to_c(inferred)
+            else:
+                ret_type = "void"
         else:
             body_expr = self._generate_expr(expr.body)
             self._emit(f"return {body_expr};")
@@ -1702,7 +1707,12 @@ class CodeGenerator:
 
         # Determine return type from body
         if isinstance(expr.body, Block):
-            ret_type = "void"
+            # Use return type inferred by TypeChecker if available and not void
+            inferred = getattr(expr, 'inferred_return_type', None)
+            if inferred and inferred.name != 'void':
+                ret_type = self._type_to_c(inferred)
+            else:
+                ret_type = "void"
         else:
             ret_type = "int32_t"
 

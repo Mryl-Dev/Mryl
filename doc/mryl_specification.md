@@ -135,9 +135,11 @@ Mryl/
 
 | 機能 | 説明 |
 |------|------|
-| `(パラメータ) => 式` | ラムダ式の定義 |
+| `(パラメータ) => 式` | 単一式ボディのラムダ式 |
+| `(パラメータ) => { 文; ... }` | 複数ステートメントを持つブロックボディのラムダ式 |
 | 型注釈対応 | パラメータに `: T` で型を指定可能 |
 | `fn` 型 | 演算が展開する内部型 (`fn(i32)->i32` 等) |
+| ブロックボディの戻り値型 | `return` 文なし → `void`、あり → 式の型を自動推論 |
 | C コード生成 | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
 
 ### 3.4 async / await
@@ -539,24 +541,49 @@ let x = pair.get_first();  // → Pair_T_get_first(pair)
 ### 基本構文
 
 ```mryl
+// 単一式ボディ
 let f = (パラメータ: 型) => 式;
+
+// ブロックボディ（複数ステートメント）
+let g = (パラメータ: 型) => {
+    文;
+    文;
+};
 ```
 
 ### 使用例
 
 ```mryl
 fn main() {
-    // 単一パラメータ
+    // 単一パラメータ（単一式ボディ）
     let mul2 = (x: i32) => x * 2;
     let r1 = mul2(5);              // 10
 
-    // 複数パラメータ
+    // 複数パラメータ（単一式ボディ）
     let add = (x: i32, y: i32) => x + y;
     let r2 = add(3, 7);            // 10
 
     // 比較式
     let is_positive = (n: i32) => n > 0;
     let r3 = is_positive(5);       // true (1)
+
+    // ブロックボディ（複数ステートメント、戻り値 void）
+    let process = (x: i32) => {
+        let doubled = x * 2;
+        let result  = doubled * 2;
+        println(result);
+    };
+    process(3);                    // 12
+    process(5);                    // 20
+
+    // ブロックボディ（return 文あり、戻り値型を自動推論）
+    let compute = (x: i32) => {
+        let doubled = x * 2;
+        let result  = doubled + 10;
+        return result;
+    };
+    let r1 = compute(3);           // 16
+    let r2 = compute(5);           // 20
 }
 ```
 
@@ -564,8 +591,11 @@ fn main() {
 
 - ラムダ変数の型は内部的に `fn` 型として扱われる
 - TypeChecker が引数・戻り値の型を推論し `fn(i32, i32) -> i32` 形式で保持
+- ブロックボディの場合、`return` 文をスキャンして戻り値型を自動推論する（`return` なしは `void`）
 
 ### C コード生成
+
+**単一式ボディ**
 
 ```c
 // ラムダ → static 関数 + 型付き関数ポインタ
@@ -576,6 +606,38 @@ static int32_t __lambda_0(int32_t x) {
 int main(void) {
     int32_t (*mul2)(int32_t) = __lambda_0;
     int32_t r1 = mul2(5);   // 10
+}
+```
+
+**ブロックボディ — void（`return` なし）**
+
+```c
+static void __lambda_0(int32_t x) {
+    int32_t doubled = (x * 2);
+    int32_t result = (doubled * 2);
+    printf("%d\n", result);
+}
+
+int main(void) {
+    void (*process)(int32_t) = __lambda_0;
+    process(3);   // 12
+    process(5);   // 20
+}
+```
+
+**ブロックボディ — 戻り値あり（`return` 文から型を自動推論）**
+
+```c
+static int32_t __lambda_1(int32_t x) {
+    int32_t doubled = (x * 2);
+    int32_t result = (doubled + 10);
+    return result;
+}
+
+int main(void) {
+    int32_t (*compute)(int32_t) = __lambda_1;
+    int32_t r1 = compute(3);   // 16
+    int32_t r2 = compute(5);   // 20
 }
 ```
 
