@@ -531,10 +531,6 @@ void __main_move_next(MrylTask* __task) {
         __task_release(__task);
         if (__task->awaiter) __scheduler_post(__task->awaiter);
         return;
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
     }
 }
 

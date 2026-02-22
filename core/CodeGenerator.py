@@ -1873,7 +1873,12 @@ class CodeGenerator:
                 self._emit_await_setup(await_stmt, i + 1, i)
                 self._emit(f"goto __state_{i + 1};")
             else:
-                self._emit_task_complete(func, has_return_val)
+                # pre_stmts に ReturnStmt が含まれる場合は完了コード生成済みのためスキップ
+                has_explicit_return = any(
+                    s.__class__.__name__ == 'ReturnStmt' for s in pre_stmts
+                )
+                if not has_explicit_return:
+                    self._emit_task_complete(func, has_return_val)
 
             self.indent_level -= 1
             self._emit("}")
