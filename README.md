@@ -1,5 +1,9 @@
 # Mryl プログラミング言語(v0.1.0) - 言語リファレンス
 
+<p align="left">
+  <img src="assets/icon_banner.png" width="700" alt="Mryl banner"/>
+</p>
+
 **Mryl** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
 
 ## 目次

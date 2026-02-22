@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    Mryl icon - Small / Favicon optimized
+    Intended sizes: 16x16, 24x24, 32x32, 48x48, 64x64
+    Simplified: gear and brackets removed for legibility at small sizes
+  -->
+  <defs>
+    <linearGradient id="bgS" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#0B2240"/>
+      <stop offset="50%"  stop-color="#0E5C5A"/>
+      <stop offset="100%" stop-color="#1A8C6A"/>
+    </linearGradient>
+
+    <!-- 霧 -->
+    <radialGradient id="mS1" cx="30%" cy="20%" r="40%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#A8DDE8" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#A8DDE8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mS2" cx="72%" cy="15%" r="36%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#B4F0DC" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#B4F0DC" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- M 芯グラデーション -->
+    <linearGradient id="coreS" x1="18" y1="16" x2="46" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#D0FFF0"/>
+      <stop offset="50%"  stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#A8F0DC"/>
+    </linearGradient>
+
+    <!-- ハロー -->
+    <filter id="haloS" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.2" result="blur"/>
+    </filter>
+
+    <clipPath id="clipS">
+      <circle cx="32" cy="32" r="32"/>
+    </clipPath>
+  </defs>
+
+  <!-- 背景 -->
+  <circle cx="32" cy="32" r="32" fill="url(#bgS)"/>
+
+  <g clip-path="url(#clipS)">
+    <!-- 霧 -->
+    <rect width="64" height="64" fill="url(#mS1)"/>
+    <rect width="64" height="64" fill="url(#mS2)"/>
+
+    <!-- 小川 波 -->
+    <path d="M-2 50 Q8 46 16 50 Q24 54 32 50 Q40 46 48 50 Q56 54 66 50 L66 64 L-2 64 Z"
+          fill="#1A7A5E" fill-opacity="0.36"/>
+    <path d="M-2 56 Q8 52 16 56 Q24 60 32 56 Q40 52 48 56 Q56 60 66 56 L66 64 L-2 64 Z"
+          fill="#2EAC80" fill-opacity="0.44"/>
+
+    <!-- さざ波 -->
+    <path d="M4 57 Q12 55 20 57 Q28 59 36 57 Q44 55 58 57"
+          stroke="white" stroke-width="0.6" stroke-opacity="0.22" fill="none" stroke-linecap="round"/>
+
+    <!-- M: ハロー -->
+    <path d="M 18 48 L 18 16 L 32 30 L 46 16 L 46 48"
+          stroke="#7EEAD0" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" filter="url(#haloS)" opacity="0.30"/>
+    <!-- M: 外グロー -->
+    <path d="M 18 48 L 18 16 L 32 30 L 46 16 L 46 48"
+          stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.42"/>
+    <!-- M: 芯 -->
+    <path d="M 18 48 L 18 16 L 32 30 L 46 16 L 46 48"
+          stroke="url(#coreS)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="1.0"/>
+  </g>
+</svg>

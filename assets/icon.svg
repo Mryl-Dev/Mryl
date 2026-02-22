@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- 背景グラデーション: 深藍 → ティール → エメラルド -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#0B2240"/>
+      <stop offset="45%"  stop-color="#0E5C5A"/>
+      <stop offset="100%" stop-color="#1A8C6A"/>
+    </linearGradient>
+
+    <!-- 霧（青寄り・エメラルド寄りの2系統） -->
+    <radialGradient id="mist1" cx="28%" cy="18%" r="34%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#A8DDE8" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#A8DDE8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mist2" cx="72%" cy="14%" r="30%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#B4F0DC" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#B4F0DC" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mist3" cx="50%" cy="40%" r="26%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#90D4C8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#90D4C8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mist4" cx="12%" cy="42%" r="20%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#A0E8D4" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#A0E8D4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mist5" cx="88%" cy="34%" r="22%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#C0F0E0" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#C0F0E0" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- 小川: エメラルドグリーン寄りの波に -->
+    <!-- M 芯グラデーション: エメラルド → 白 → ティール -->
+    <linearGradient id="mCore" x1="148" y1="138" x2="364" y2="374" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#D0FFF0"/>
+      <stop offset="40%"  stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#A8F0DC"/>
+    </linearGradient>
+
+    <!-- M グロー色（エメラルドホワイト） -->
+    <linearGradient id="mGlow" x1="148" y1="138" x2="364" y2="374" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#7EEAD0"/>
+      <stop offset="50%"  stop-color="#B4F5E4"/>
+      <stop offset="100%" stop-color="#6EDCC0"/>
+    </linearGradient>
+
+    <!-- 円形クリップ -->
+    <clipPath id="circleClip">
+      <circle cx="256" cy="256" r="256"/>
+    </clipPath>
+
+    <!-- ハローフィルタ -->
+    <filter id="halo" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+    </filter>
+  </defs>
+
+  <!-- 背景（丸） -->
+  <circle cx="256" cy="256" r="256" fill="url(#bgGrad)"/>
+
+  <g clip-path="url(#circleClip)">
+
+    <!-- ── 霧（Mist） ── -->
+    <rect width="512" height="512" fill="url(#mist1)"/>
+    <rect width="512" height="512" fill="url(#mist2)"/>
+    <rect width="512" height="512" fill="url(#mist3)"/>
+    <rect width="512" height="512" fill="url(#mist4)"/>
+    <rect width="512" height="512" fill="url(#mist5)"/>
+
+    <ellipse cx="256" cy="72"  rx="190" ry="32" fill="#C8F5E8" fill-opacity="0.10"/>
+    <ellipse cx="96"  cy="144" rx="150" ry="36" fill="#A8DDE0" fill-opacity="0.08"/>
+    <ellipse cx="406" cy="114" rx="140" ry="30" fill="#B4EED8" fill-opacity="0.08"/>
+
+    <!-- ── 小川（Rill）: エメラルドグリーンの波 ── -->
+    <path d="M-10 404 Q66 378 128 404 Q190 430 256 404 Q322 378 384 404 Q446 430 522 404 L522 512 L-10 512 Z"
+          fill="#1A7A5E" fill-opacity="0.34"/>
+    <path d="M-10 432 Q66 410 128 432 Q190 454 256 432 Q322 410 384 432 Q446 454 522 432 L522 512 L-10 512 Z"
+          fill="#22906C" fill-opacity="0.38"/>
+    <path d="M-10 458 Q66 440 128 458 Q190 476 256 458 Q322 440 384 458 Q446 476 522 458 L522 512 L-10 512 Z"
+          fill="#2EAC80" fill-opacity="0.42"/>
+
+    <!-- さざ波（エメラルド系） -->
+    <path d="M 50 450 Q 112 443 174 450 Q 236 457 298 450 Q 360 443 430 450"
+          stroke="#A8F0D8" stroke-width="1.8" stroke-opacity="0.32" fill="none" stroke-linecap="round"/>
+    <path d="M 35 469 Q 106 462 177 469 Q 248 476 319 469 Q 390 462 460 469"
+          stroke="#C0F8E8" stroke-width="1.4" stroke-opacity="0.22" fill="none" stroke-linecap="round"/>
+    <path d="M 72 486 Q 138 480 204 486 Q 270 492 336 486 Q 402 480 460 486"
+          stroke="white"   stroke-width="1.1" stroke-opacity="0.15" fill="none" stroke-linecap="round"/>
+
+    <!-- ━━━━━━━━━━━━━━━━━━━━━
+         M レターマーク（小さめ・中央寄り）
+         座標: 左下(148,374) 左上(148,138) 頂点(256,252) 右上(364,138) 右下(364,374)
+    ━━━━━━━━━━━━━━━━━━━━━ -->
+
+    <!-- layer1: 最外ハロー（エメラルドの霧） -->
+    <path d="M 148 374 L 148 138 L 256 252 L 364 138 L 364 374"
+          stroke="url(#mGlow)" stroke-width="78" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" filter="url(#halo)" opacity="0.28"/>
+
+    <!-- layer2: 外グロー -->
+    <path d="M 148 374 L 148 138 L 256 252 L 364 138 L 364 374"
+          stroke="#C0F5E8" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.32"/>
+
+    <!-- layer3: 中間（ふわっとした厚み） -->
+    <path d="M 148 374 L 148 138 L 256 252 L 364 138 L 364 374"
+          stroke="white" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.50"/>
+
+    <!-- layer4: 芯（エメラルド→白、くっきり） -->
+    <path d="M 148 374 L 148 138 L 256 252 L 364 138 L 364 374"
+          stroke="url(#mCore)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="1.0"/>
+
+    <!-- ━━━━━━━━━━━━━━━━━━━━━
+         C/C++ / Rust リスペクト
+    ━━━━━━━━━━━━━━━━━━━━━ -->
+
+    <!-- Rust: 外周ギヤリング（アンバー/ブロンズ）
+         stroke-dasharray で歯を表現、16 歯相当 -->
+    <circle cx="256" cy="256" r="242"
+            stroke="#D4A054" stroke-width="14" fill="none"
+            stroke-dasharray="55 38" stroke-linecap="square"
+            opacity="0.58"
+            transform="rotate(-4 256 256)"/>
+    <!-- ギヤ内縁ライン（細） -->
+    <circle cx="256" cy="256" r="231"
+            stroke="#C8943A" stroke-width="1.4" fill="none"
+            opacity="0.28"/>
+
+    <!-- C/C++: angle brackets < >
+         テンプレート構文・C++ の記法リスペクト -->
+    <path d="M 100 324 L 72 352 L 100 380"
+          stroke="white" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.34"/>
+    <path d="M 412 324 L 440 352 L 412 380"
+          stroke="white" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.34"/>
+
+    <!-- Rust :: 演算子（名前空間、Mryl でも採用）
+         M の下、中央に極小でそっと -->
+    <path d="M 240 408 L 240 416"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+    <path d="M 240 421 L 240 429"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+    <path d="M 256 408 L 256 416"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+    <path d="M 256 421 L 256 429"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+    <path d="M 272 408 L 272 416"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+    <path d="M 272 421 L 272 429"
+          stroke="white" stroke-width="3.5" stroke-linecap="round"
+          opacity="0.28"/>
+
+  </g>
+</svg>
