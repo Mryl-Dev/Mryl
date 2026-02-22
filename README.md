@@ -4,7 +4,9 @@
   <img src="assets/icon_banner.png" width="700" alt="Mryl banner"/>
 </p>
 
-**Mryl** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
+**Mryl（ミリルと読みます）** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
+
+言語の詳細仕様は **doc/mryl_specification.md** を参照してください。
 
 ## 目次
 
@@ -1411,5 +1413,6 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_13_boundary_numeric.ml](../tests/test_13_boundary_numeric.ml) | 数値型境界値（C0・境界値分析） | ✅ Python + C + Native |
 | [tests/test_14_branch_coverage.ml](../tests/test_14_branch_coverage.ml) | 条件分岐網羅（C0/C1/MC/DC） | ✅ Python + C + Native |
 | [tests/test_15_loop_boundary.ml](../tests/test_15_loop_boundary.ml) | ループ境界値（while/for/break/continue）| ✅ Python + C + Native |
+| [tests/test_16_async_lambda.ml](../tests/test_16_async_lambda.ml) | async ラムダ式（定義・呼び出し・await 待機・ネスト await） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
