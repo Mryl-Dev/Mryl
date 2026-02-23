@@ -65,6 +65,12 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
             return "%s"
         if t in ("f32", "f64", "float"):
             return "%f"
+        if t in ("i64",):
+            return "%lld"
+        if t in ("u64",):
+            return "%llu"
+        if t in ("u32", "u16", "u8"):
+            return "%u"
         if t in ("bool",):
             return "%d"
         return "%d"

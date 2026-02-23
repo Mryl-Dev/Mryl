@@ -193,7 +193,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 format_args = expr.args[1:]
                 parts       = fmt_str.split("{}")
                 if len(parts) != len(format_args) + 1:
-                    fmt_c = self._c_escape(fmt_str.replace("{}", "%d"))
+                    # {} の数と引数が一致しない: 各 {} に対して型に応じた spec を使用
+                    raw_parts = fmt_str.split("{}")
+                    fmt_c = ""
+                    for j, rp in enumerate(raw_parts[:-1]):
+                        spec = self._type_to_fmt_spec(format_args[j]) if j < len(format_args) else "%d"
+                        fmt_c += rp.replace("%", "%%") + spec
+                    fmt_c += raw_parts[-1].replace("%", "%%")
+                    fmt_c  = fmt_c.replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r")
                     args  = [f'"{fmt_c}"']
                     for a in format_args:
                         arg_type = self._infer_expr_type(a)
