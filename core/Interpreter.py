@@ -728,60 +728,7 @@ class Interpreter:
             return self.get_var(env, expr.name)
 
         if isinstance(expr, UnaryOp):
-            if expr.op == "++":
-                # Pre-increment: ++i
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    new_val = current + 1
-                    self.assign_var(env, var_name, new_val)
-                    return new_val
-                else:
-                    raise RuntimeError("++ can only be applied to variables")
-            
-            if expr.op == "--":
-                # Pre-decrement: --i
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    new_val = current - 1
-                    self.assign_var(env, var_name, new_val)
-                    return new_val
-                else:
-                    raise RuntimeError("-- can only be applied to variables")
-            
-            if expr.op == "post++":
-                # Post-increment: i++
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    self.assign_var(env, var_name, current + 1)
-                    return current  # Return old value
-                else:
-                    raise RuntimeError("++ can only be applied to variables")
-            
-            if expr.op == "post--":
-                # Post-decrement: i--
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    self.assign_var(env, var_name, current - 1)
-                    return current  # Return old value
-                else:
-                    raise RuntimeError("-- can only be applied to variables")
-            
-            v = self.eval_expr(expr.operand, env)
-            if expr.op == "+":
-                return +v
-            if expr.op == "-":
-                return -v
-            if expr.op == "!":
-                # Logical NOT
-                return not self.is_truthy(v)
-            if expr.op == "~":
-                # Bitwise NOT
-                return ~int(v)
-            raise RuntimeError(f"Unknown unary operator: {expr.op}")
+            return self._eval_unary_op(expr, env)
 
         if isinstance(expr, BinaryOp):
             # Handle short-circuit evaluation for logical operators
@@ -895,6 +842,47 @@ class Interpreter:
             return None
 
         raise RuntimeError(f"Unknown expression: {expr}")
+
+    def _eval_unary_op(self, expr, env):
+        """単項演算子を評価する。eval_expr から委譲される。"""
+        if expr.op == "++":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                new_val = self.get_var(env, var_name) + 1
+                self.assign_var(env, var_name, new_val)
+                return new_val
+            raise RuntimeError("++ can only be applied to variables")
+
+        if expr.op == "--":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                new_val = self.get_var(env, var_name) - 1
+                self.assign_var(env, var_name, new_val)
+                return new_val
+            raise RuntimeError("-- can only be applied to variables")
+
+        if expr.op == "post++":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                old = self.get_var(env, var_name)
+                self.assign_var(env, var_name, old + 1)
+                return old
+            raise RuntimeError("++ can only be applied to variables")
+
+        if expr.op == "post--":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                old = self.get_var(env, var_name)
+                self.assign_var(env, var_name, old - 1)
+                return old
+            raise RuntimeError("-- can only be applied to variables")
+
+        v = self.eval_expr(expr.operand, env)
+        if expr.op == "+":  return +v
+        if expr.op == "-":  return -v
+        if expr.op == "!":  return not self.is_truthy(v)
+        if expr.op == "~":  return ~int(v)
+        raise RuntimeError(f"Unknown unary operator: {expr.op}")
 
     def _match_pattern(self, pattern, val):
         """Try to match pattern against val. Returns (bindings_dict, matched_bool)."""
@@ -1079,140 +1067,77 @@ class Interpreter:
     # Method Call
     # ============================================================
     def eval_method_call(self, expr: MethodCall, env):
-        """Invoke method on struct instance.
-        
-        Args:
-            expr (MethodCall): Method call expression with object, method name, and arguments
-            env (list): Scope stack for argument evaluation
-        
-        Processing:
-            1. Evaluate object expression to get struct instance
-            2. Verify object is struct with __struct_name__
-            3. Look up struct definition and method by name
-            4. Evaluate argument expressions
-            5. Create new scope with self binding
-            6. Execute method body with parameter bindings
-        
-        Returns:
-            Return value from method, or None if no explicit return
-        
-        Raises:
-            RuntimeError: If object not struct, struct not defined, method not found
-            ReturnSignal (exception): Caught to extract return value
-        
-        Notes:
-            - First parameter (self) auto-bound to object instance
-            - Remaining parameters filled by position with evaluated arguments
-            - Method scope is isolated from caller scope
-        """
-        # Evaluate object to get struct instance
+        """メソッド呼び出しをオブジェクト種別に応じてディスパッチする。"""
         obj = self.eval_expr(expr.obj, env)
+        args_eval = [self.eval_expr(a, env) for a in expr.args]
 
-        # 動的配列(Python list)のメソッド処理
         if isinstance(obj, list):
-            args_eval = [self.eval_expr(a, env) for a in expr.args]
-            if expr.method == 'push':
-                obj.append(args_eval[0])
-                return None
-            elif expr.method == 'pop':
-                if not obj:
-                    raise MrylRuntimeError("pop() called on empty array", "IndexError", self.call_stack)
-                return obj.pop()
-            elif expr.method == 'len':
-                return len(obj)
-            elif expr.method == 'is_empty':
-                return len(obj) == 0
-            elif expr.method == 'remove':
-                idx = int(args_eval[0])
-                if idx < 0 or idx >= len(obj):
-                    raise MrylRuntimeError(f"remove() index {idx} out of bounds", "IndexError", self.call_stack)
-                return obj.pop(idx)
-            elif expr.method == 'insert':
-                idx, val = int(args_eval[0]), args_eval[1]
-                obj.insert(idx, val)
-                return None
-            raise RuntimeError(f"Unknown array method: {expr.method}")
+            return self._eval_array_method(obj, expr.method, args_eval)
 
-        # Result 型のメソッド処理
         if isinstance(obj, dict) and '__result_tag__' in obj:
-            args_eval = [self.eval_expr(a, env) for a in expr.args]
-            if expr.method == 'is_ok':
-                return obj['__result_tag__'] == 'ok'
-            if expr.method == 'is_err':
-                return obj['__result_tag__'] == 'err'
-            if expr.method == 'try':
-                # .try() : Ok値を取り出す。Err なら構造化エラーで終了
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"Err({obj['value']!r})",
-                    error_type="Error",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"unwrap() called on Err value: {obj['value']!r}",
-                    error_type="UnwrapError",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'err':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"Err({obj['value']!r})",
-                    error_type="Error",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap_err':
-                if obj['__result_tag__'] == 'err':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"unwrap_err() called on Ok value: {obj['value']!r}",
-                    error_type="UnwrapError",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap_or':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                return args_eval[0] if args_eval else None
-            raise RuntimeError(f"Unknown Result method: {expr.method}")
+            return self._eval_result_method(obj, expr.method, args_eval)
 
-        # Verify object is struct with __struct_name__
-        if not isinstance(obj, dict) or "__struct_name__" not in obj:
-            raise RuntimeError(f"Cannot call method on non-struct value")
-        
-        struct_name = obj["__struct_name__"]
+        if isinstance(obj, dict) and '__struct_name__' in obj:
+            return self._eval_struct_method(obj, expr.method, args_eval)
+
+        raise RuntimeError(f"Cannot call method on non-struct value")
+
+    def _eval_array_method(self, obj: list, method: str, args_eval: list):
+        """動的配列（Python list）のメソッドを処理する。"""
+        if method == 'push':
+            obj.append(args_eval[0])
+            return None
+        if method == 'pop':
+            if not obj:
+                raise MrylRuntimeError("pop() called on empty array", "IndexError", self.call_stack)
+            return obj.pop()
+        if method == 'len':
+            return len(obj)
+        if method == 'is_empty':
+            return len(obj) == 0
+        if method == 'remove':
+            idx = int(args_eval[0])
+            if idx < 0 or idx >= len(obj):
+                raise MrylRuntimeError(f"remove() index {idx} out of bounds", "IndexError", self.call_stack)
+            return obj.pop(idx)
+        if method == 'insert':
+            obj.insert(int(args_eval[0]), args_eval[1])
+            return None
+        raise RuntimeError(f"Unknown array method: {method}")
+
+    def _eval_result_method(self, obj: dict, method: str, args_eval: list):
+        """Result 型（Ok/Err）のメソッドを処理する。"""
+        is_ok = obj['__result_tag__'] == 'ok'
+        if method == 'is_ok':    return is_ok
+        if method == 'is_err':   return not is_ok
+        if method in ('try', 'err'):
+            if is_ok: return obj['value']
+            raise MrylRuntimeError(f"Err({obj['value']!r})", error_type="Error", call_stack=self.call_stack)
+        if method == 'unwrap':
+            if is_ok: return obj['value']
+            raise MrylRuntimeError(f"unwrap() called on Err value: {obj['value']!r}", error_type="UnwrapError", call_stack=self.call_stack)
+        if method == 'unwrap_err':
+            if not is_ok: return obj['value']
+            raise MrylRuntimeError(f"unwrap_err() called on Ok value: {obj['value']!r}", error_type="UnwrapError", call_stack=self.call_stack)
+        if method == 'unwrap_or':
+            return obj['value'] if is_ok else (args_eval[0] if args_eval else None)
+        raise RuntimeError(f"Unknown Result method: {method}")
+
+    def _eval_struct_method(self, obj: dict, method_name: str, args_eval: list):
+        """ユーザー定義 struct のメソッドを実行する。"""
+        struct_name = obj['__struct_name__']
         struct = self.structs.get(struct_name)
-        
         if not struct:
             raise RuntimeError(f"Undefined struct: {struct_name}")
-        
-        # Search for method by name
-        method = None
-        for m in struct.methods:
-            if m.name == expr.method:
-                method = m
-                break
-        
+
+        method = next((m for m in struct.methods if m.name == method_name), None)
         if not method:
-            raise RuntimeError(f"Struct {struct_name} has no method {expr.method}")
-        
-        # Evaluate arguments
-        args = [self.eval_expr(a, env) for a in expr.args]
-        
-        # Create new scope
-        new_env = {}
-        
-        # Bind self to first parameter
-        new_env[method.params[0].name] = obj
-        
-        # Bind remaining arguments
-        for param, arg_value in zip(method.params[1:], args):
-            new_env[param.name] = arg_value
-        
-        # Execute method body
+            raise RuntimeError(f"Struct {struct_name} has no method {method_name}")
+
+        new_env = {method.params[0].name: obj}
+        for param, val in zip(method.params[1:], args_eval):
+            new_env[param.name] = val
+
         self.env.append(new_env)
         try:
             for stmt in method.body.statements:
@@ -1221,8 +1146,6 @@ class Interpreter:
             return ret.value
         finally:
             self.env.pop()
-        
-        # Default return value (if no explicit return)
         return None
 
     # ============================================================
