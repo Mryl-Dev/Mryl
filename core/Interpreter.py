@@ -119,6 +119,29 @@ class Interpreter:
         for name, func in self.builtins.items():
             self.functions[name] = ("builtin", func)
 
+        # 式ディスパッチテーブル (eval_expr ハンドラ: AST ノード型 → メソッド)
+        self._expr_dispatch: dict = {
+            NumberLiteral:    self._eval_literal,
+            FloatLiteral:     self._eval_literal,
+            StringLiteral:    self._eval_literal,
+            BoolLiteral:      self._eval_literal,
+            VarRef:           self._eval_var_ref,
+            UnaryOp:          self._eval_unary_op,
+            BinaryOp:         self._eval_binary_op,
+            ArrayAccess:      self._eval_array_access,
+            StructAccess:     self._eval_struct_access,
+            FunctionCall:     self._eval_function_call,
+            StructInit:       self.eval_struct_init,
+            ArrayLiteral:     self._eval_array_literal,
+            MethodCall:       self.eval_method_call,
+            Range:            self._eval_range,
+            Lambda:           self._eval_lambda,
+            AwaitExpr:        self._eval_await_expr,
+            EnumVariantExpr:  self._eval_enum_variant_expr,
+            MatchExpr:        self._eval_match_expr,
+            BlockExpr:        self._eval_block_expr,
+        }
+
     # ============================================================
     # プログラム実行
     # ============================================================
@@ -712,136 +735,125 @@ class Interpreter:
             - Variable scope searched deepest-first via get_var()
             - Function calls delegate to call_function()
         """
-        if isinstance(expr, NumberLiteral):
-            return expr.value
+        handler = self._expr_dispatch.get(type(expr))
+        if handler is None:
+            raise RuntimeError(f"Unknown expression: {type(expr).__name__}")
+        return handler(expr, env)
 
-        if isinstance(expr, FloatLiteral):
-            return expr.value
 
-        if isinstance(expr, StringLiteral):
-            return expr.value
+    # ------------------------------------------------------------------
+    # eval_expr ハンドラ群（_expr_dispatch から呼ばれる）
+    # ------------------------------------------------------------------
 
-        if isinstance(expr, BoolLiteral):
-            return expr.value
+    def _eval_literal(self, expr, env):
+        """NumberLiteral / FloatLiteral / StringLiteral / BoolLiteral → 値をそのまま返す。"""
+        return expr.value
 
-        if isinstance(expr, VarRef):
-            return self.get_var(env, expr.name)
+    def _eval_var_ref(self, expr, env):
+        """VarRef → スコープスタックから変数値を取得する。"""
+        return self.get_var(env, expr.name)
 
-        if isinstance(expr, UnaryOp):
-            return self._eval_unary_op(expr, env)
-
-        if isinstance(expr, BinaryOp):
-            # Handle short-circuit evaluation for logical operators
-            if expr.op == "&&":
-                left = self.eval_expr(expr.left, env)
-                if not self.is_truthy(left):
-                    return False  # Short-circuit: right is not evaluated
-                right = self.eval_expr(expr.right, env)
-                return self.is_truthy(right)
-            
-            if expr.op == "||":
-                left = self.eval_expr(expr.left, env)
-                if self.is_truthy(left):
-                    return True  # Short-circuit: right is not evaluated
-                right = self.eval_expr(expr.right, env)
-                return self.is_truthy(right)
-            
-            # For other operators, evaluate both sides
+    def _eval_binary_op(self, expr, env):
+        """BinaryOp → 短絡評価を含む二項演算を実行する。"""
+        if expr.op == "&&":
             left = self.eval_expr(expr.left, env)
-            right = self.eval_expr(expr.right, env)
-            return self.eval_binary(expr.op, left, right)
+            if not self.is_truthy(left):
+                return False
+            return self.is_truthy(self.eval_expr(expr.right, env))
+        if expr.op == "||":
+            left = self.eval_expr(expr.left, env)
+            if self.is_truthy(left):
+                return True
+            return self.is_truthy(self.eval_expr(expr.right, env))
+        left  = self.eval_expr(expr.left,  env)
+        right = self.eval_expr(expr.right, env)
+        return self.eval_binary(expr.op, left, right)
 
-        if isinstance(expr, ArrayAccess):
-            arr = self.eval_expr(expr.array, env)
-            index = self.eval_expr(expr.index, env)
-            return arr[index]
+    def _eval_array_access(self, expr, env):
+        """ArrayAccess → 配列要素を返す。"""
+        return self.eval_expr(expr.array, env)[self.eval_expr(expr.index, env)]
 
-        if isinstance(expr, StructAccess):
-            obj = self.eval_expr(expr.obj, env)
-            return obj[expr.field]
+    def _eval_struct_access(self, expr, env):
+        """StructAccess → 構造体フィールド値を返す。"""
+        return self.eval_expr(expr.obj, env)[expr.field]
 
-        if isinstance(expr, FunctionCall):
-            # Check if the name refers to a lambda variable in scope
-            try:
-                maybe_lambda = self.get_var(env, expr.name)
-                if isinstance(maybe_lambda, dict) and maybe_lambda.get('__lambda__'):
-                    args = [self.eval_expr(a, env) for a in expr.args]
-                    return self.call_lambda(maybe_lambda, args)
-            except RuntimeError:
-                pass  # Not a variable, fall through to normal function call
+    def _eval_function_call(self, expr, env):
+        """FunctionCall → ラムダ変数か通常関数を呼び出す。"""
+        try:
+            maybe_lambda = self.get_var(env, expr.name)
+            if isinstance(maybe_lambda, dict) and maybe_lambda.get('__lambda__'):
+                args = [self.eval_expr(a, env) for a in expr.args]
+                return self.call_lambda(maybe_lambda, args)
+        except RuntimeError:
+            pass
+        subst = self.infer_call_subst(expr, env)
+        args  = [self.eval_expr(a, env) for a in expr.args]
+        return self.call_function(expr.name, args, subst)
 
-            subst = self.infer_call_subst(expr, env)
-            args = [self.eval_expr(a, env) for a in expr.args]
-            return self.call_function(expr.name, args, subst)
+    def _eval_array_literal(self, expr, env):
+        """ArrayLiteral → Python list として返す。"""
+        return [self.eval_expr(e, env) for e in expr.elements]
 
-        if isinstance(expr, StructInit):
-            return self.eval_struct_init(expr, env)
+    def _eval_range(self, expr, env):
+        """Range → __range__ dict として返す。"""
+        return {
+            "__range__": True,
+            "start":     self.eval_expr(expr.start, env),
+            "end":       self.eval_expr(expr.end,   env),
+            "inclusive": expr.inclusive,
+        }
 
-        if isinstance(expr, ArrayLiteral):
-            return [self.eval_expr(e, env) for e in expr.elements]
+    def _eval_lambda(self, expr, env):
+        """Lambda → クロージャ dict を生成して返す。"""
+        return {
+            '__lambda__':   True,
+            'params':       expr.params,
+            'body':         expr.body,
+            'is_async':     getattr(expr, 'is_async', False),
+            'captured_env': [dict(scope) for scope in env],
+        }
 
-        if isinstance(expr, MethodCall):
-            return self.eval_method_call(expr, env)
+    def _eval_await_expr(self, expr, env):
+        """AwaitExpr → Future を解決して結果を返す。"""
+        future = self.eval_expr(expr.expr, env)
+        if isinstance(future, dict) and future.get('__future__'):
+            loop = future.get('loop')
+            if loop is None:
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            return loop.run_until_complete(future['task'])
+        raise RuntimeError("await: expression is not a Future")
 
-        if isinstance(expr, Range):
-            start = self.eval_expr(expr.start, env)
-            end = self.eval_expr(expr.end, env)
-            # Return a Range object (dict) that can be iterated
-            # Using a dict to represent Range at runtime
-            return {"__range__": True, "start": start, "end": end, "inclusive": expr.inclusive}
+    def _eval_enum_variant_expr(self, expr, env):
+        """EnumVariantExpr → __enum__ dict を生成して返す。"""
+        return {
+            '__enum__':    expr.enum_name,
+            '__variant__': expr.variant_name,
+            '__data__':    [self.eval_expr(a, env) for a in expr.args],
+        }
 
-        if isinstance(expr, Lambda):
-            # Create a closure: capture current env snapshot
-            captured_env = [dict(scope) for scope in env]
-            return {
-                '__lambda__': True,
-                'params': expr.params,
-                'body': expr.body,
-                'is_async': getattr(expr, 'is_async', False),
-                'captured_env': captured_env,
-            }
+    def _eval_match_expr(self, expr, env):
+        """MatchExpr → パターンマッチを行い、マッチしたアームの値を返す。"""
+        val = self.eval_expr(expr.scrutinee, env)
+        for arm in expr.arms:
+            bound, matched = self._match_pattern(arm.pattern, val)
+            if matched:
+                return self.eval_expr(arm.body, env + [bound])
+        raise MrylRuntimeError(
+            f"no arm matched value: {val!r}",
+            error_type="MatchError",
+            call_stack=self.call_stack,
+        )
 
-        if isinstance(expr, AwaitExpr):
-            future = self.eval_expr(expr.expr, env)
-            if isinstance(future, dict) and future.get('__future__'):
-                loop = future.get('loop')
-                if loop is None:
-                    try:
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                return loop.run_until_complete(future['task'])
-            raise RuntimeError("await: expression is not a Future")
-
-        if isinstance(expr, EnumVariantExpr):
-            # Create enum value: {__enum__: EnumName, __variant__: VariantName, __data__: [...]}
-            data = [self.eval_expr(a, env) for a in expr.args]
-            return {'__enum__': expr.enum_name, '__variant__': expr.variant_name, '__data__': data}
-
-        if isinstance(expr, MatchExpr):
-            val = self.eval_expr(expr.scrutinee, env)
-            for arm in expr.arms:
-                bound, matched = self._match_pattern(arm.pattern, val)
-                if matched:
-                    arm_env = env + [bound]
-                    return self.eval_expr(arm.body, arm_env)
-            raise MrylRuntimeError(
-                f"no arm matched value: {val!r}",
-                error_type="MatchError",
-                call_stack=self.call_stack,
-            )
-
-        if isinstance(expr, BlockExpr):
-            # ブロック式: ステートメントを順番に実行し、最後の result_expr を返す
-            block_env = env + [{}]
-            for stmt in expr.stmts:
-                self.exec_stmt(stmt, block_env)
-            if expr.result_expr is not None:
-                return self.eval_expr(expr.result_expr, block_env)
-            return None
-
-        raise RuntimeError(f"Unknown expression: {expr}")
+    def _eval_block_expr(self, expr, env):
+        """BlockExpr → ステートメントを順次実行し、result_expr の値を返す。"""
+        block_env = env + [{}]
+        for stmt in expr.stmts:
+            self.exec_stmt(stmt, block_env)
+        return self.eval_expr(expr.result_expr, block_env) if expr.result_expr is not None else None
 
     def _eval_unary_op(self, expr, env):
         """単項演算子を評価する。eval_expr から委譲される。"""
