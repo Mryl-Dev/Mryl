@@ -1,7 +1,7 @@
 ﻿# Mryl プログラミング言語 - 完全仕様書
 
 **バージョン**: 0.1.0 
-**最終更新**: 2026年2月21日
+**最終更新**: 2026年2月23日
 
 ---
 
@@ -69,9 +69,26 @@ Mryl/
 │   ├── Lexer.py              # トークン化（FAT_ARROW, ASYNC, AWAIT 対応）
 │   ├── Parser.py             # AST 構築（ラムダ, async fn, await）
 │   ├── Ast.py                # AST ノード定義（Lambda, AwaitExpr, is_async）
-│   ├── TypeChecker.py        # 型チェック（fn型, Future<T>型）
+│   ├── TypeChecker/          # 型チェックパッケージ（Mixin 分割）
+│   │   ├── __init__.py       #   TypeChecker メインクラス（4 Mixin 多重継承）
+│   │   ├── _stmt.py          #   文の型チェック
+│   │   ├── _expr.py          #   式の型チェック
+│   │   ├── _call.py          #   関数呼び出しの型チェック
+│   │   └── _util.py          #   型比較・型昇格ユーティリティ
 │   ├── Interpreter.py        # Python インタプリタ（クロージャ, asyncio）
-│   ├── CodeGenerator.py      # C コード生成（関数ポインタ, 状態機械, MrylTask）
+│   ├── CodeGenerator/        # C コード生成パッケージ（Mixin 分割）
+│   │   ├── __init__.py       #   CodeGenerator メインクラス（10 Mixin 多重継承）
+│   │   ├── _proto.py         #   Protocol 基底クラス（全属性・メソッドスタブ）
+│   │   ├── _util.py          #   共通ユーティリティ・エスケープ処理
+│   │   ├── _type.py          #   C 型変換・フォーマット指定子
+│   │   ├── _const.py         #   定数生成・定数式評価
+│   │   ├── _struct.py        #   struct/enum 生成
+│   │   ├── _header.py        #   インクルード・組み込み型・ヘルパー生成
+│   │   ├── _stmt.py          #   文生成
+│   │   ├── _expr.py          #   式生成・match 式・メソッド呼び出し
+│   │   ├── _lambda.py        #   ラムダ・クロージャ生成
+│   │   ├── _async.py         #   async/await ステートマシン生成
+│   │   └── _generic.py       #   ジェネリック関数インスタンス化
 │   ├── MrylError.py          # エラー定義
 │   └── Mryl.py               # エントリポイント
 ├── tests/
@@ -89,14 +106,13 @@ Mryl/
 │   ├── test_12_type_check.ml    # 型宣言 / 型推論 / 型チェック / 型昇格
 │   ├── test_13_boundary_numeric.ml  # 数値型境界値（C0・境界値分析）
 │   ├── test_14_branch_coverage.ml   # 条件分岐網羅（C0/C1/MC/DC）
-│   └── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
+│   ├── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
+│   └── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
 ├── my/
-│   ├── print.ml            # print/println デモ
-│   ├── for_loops.ml        # for ループ各種
-│   ├── generic_simple.ml   # ジェネリック関数デモ
-│   ├── generic.ml          # フル機能ジェネリック
-│   ├── struct_methods.ml   # 構造体とメソッド
-│   └── advanced_methods.ml # 高度な機能サンプル
+│   ├── test_async_lambda.ml          # async ラムダ式（基本）動作確認用
+│   ├── test_async_lambda_await.ml    # async ラムダ式（await 内包）動作確認用
+│   ├── test_lambda_block.ml          # ラムダ式ブロックボディ動作確認用
+│   └── test_lambda_block_return.ml   # ラムダ式ブロックボディ return 動作確認用
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
 │   └── Mryl.exe              # コンパイル済みバイナリ
