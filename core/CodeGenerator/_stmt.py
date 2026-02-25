@@ -235,8 +235,13 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         cond = self._generate_expr(stmt.condition)
         self._emit(f"while ({self._strip_outer_parens(cond)}) {{")
         self.indent_level += 1
+        saved_str_vars = list(self.local_string_vars)
         for s in stmt.body.statements:
             self._generate_statement(s)
+        for vn in self.local_string_vars:
+            if vn not in saved_str_vars:
+                self._emit(f"free_mryl_string({vn});")
+        self.local_string_vars = saved_str_vars
         self.indent_level -= 1
         self._emit("}")
 
@@ -303,10 +308,17 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                         "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
                         "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
                         "f32": "float",  "f64": "double",   "bool": "int",
+                        "string": "MrylString",
                     }.get(et, "int32_t")
                     self._emit(f"{ct} {stmt.variable} = {var_name}.data[{loop_var_name}];")
+                    self.env[-1][stmt.variable] = et
+                    saved_str_vars = list(self.local_string_vars)
                     for s in stmt.body.statements:
                         self._generate_statement(s)
+                    for vn in self.local_string_vars:
+                        if vn not in saved_str_vars:
+                            self._emit(f"free_mryl_string({vn});")
+                    self.local_string_vars = saved_str_vars
                     self.indent_level -= 1
                     self._emit("}")
                     return
@@ -319,9 +331,22 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                         f"{loop_var_name} < {array_size}; {loop_var_name}++) {{"
                     )
                     self.indent_level += 1
-                    self._emit(f"int32_t {stmt.variable} = {var_name}[{loop_var_name}];")
+                    _c_arr_map = {
+                        "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
+                        "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
+                        "f32": "float", "f64": "double", "string": "MrylString", "bool": "int",
+                    }
+                    arr_elem_type = self.env[-1].get(var_name, 'i32')
+                    arr_elem_c    = _c_arr_map.get(arr_elem_type, arr_elem_type)
+                    self._emit(f"{arr_elem_c} {stmt.variable} = {var_name}[{loop_var_name}];")
+                    self.env[-1][stmt.variable] = arr_elem_type
+                    saved_str_vars = list(self.local_string_vars)
                     for s in stmt.body.statements:
                         self._generate_statement(s)
+                    for vn in self.local_string_vars:
+                        if vn not in saved_str_vars:
+                            self._emit(f"free_mryl_string({vn});")
+                    self.local_string_vars = saved_str_vars
                     self.indent_level -= 1
                     self._emit("}")
                     return
@@ -340,8 +365,13 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 )
 
         self.indent_level += 1
+        saved_str_vars = list(self.local_string_vars)
         for s in stmt.body.statements:
             self._generate_statement(s)
+        for vn in self.local_string_vars:
+            if vn not in saved_str_vars:
+                self._emit(f"free_mryl_string({vn});")
+        self.local_string_vars = saved_str_vars
         self.indent_level -= 1
         self._emit("}")
 
