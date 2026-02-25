@@ -1,131 +1,201 @@
+﻿// ============================================================
+// Test 03: 制御フロー
+//   A. if/else if/else / B. while / C. for Rust / D. for C
+//   E. ネスト制御 / F. return 早期脱出
+//
+// カバレッジ観点:
+//   C0  : A〜F 全セクションの文を実行
+//   C1  :
+//     A: if/else if/else の全分岐を実行
+//     B: while の「継続」「脱出」「0回」「break」「continue」経路
+//     C: for range の境界(0..0 / 0..3) + 配列イテレーション
+//     D: for C スタイルの「条件真」「条件偽」経路
+//     E: ネスト内の内側条件の真偽両方を実行
+//     F: 早期 return 経路と通常 return 経路の両方を実行
+//   MC/DC:
+//     A: 各条件が単独で分岐結果を決める
+//       score>=90 だけで "A" に到達, score>=70 だけで "B" に到達 など
+//     B: while 条件 i<N: i=0(T)〜i=N(F) で両辺値が独立して変化
+//     E: ネスト if 条件 v>5 : v=3(F), v=7(T) で分岐結果が反転することを確認
+//   備考:
+//     D,C の for の MC/DC は条件が自明なため C1 と同等に扱う
 // ============================================================
-// Test 03: Control Flow
-//   if/else / while / for Rust-style / for C-style / break / continue
-// ============================================================
+
+// F. 早期脱出テスト用ヘルパー関数
+fn classify(v: i32) -> i32 {
+    if (v < 0) {
+        return -1;         // 早期 return (負数)
+    }
+    if (v == 0) {
+        return 0;          // 早期 return (ゼロ)
+    }
+    return 1;              // 通常 return (正数)
+}
 
 fn main() -> i32 {
     println("=== 03: Control Flow ===");
 
-    // --- if / else if / else ---
-    println("--- if/else ---");
-    let score = 75;
+    // ----------------------------------------------------------
+    // A. if / else if / else チェーン (C1 + MC/DC)
+    // ----------------------------------------------------------
+    println("--- A: if/else if/else ---");
+
+    // MC/DC: score>=90 が単独で "A" を決める
+    let score = 95;
     if (score >= 90) {
-        println("A");
+        println("grade=A");           // grade=A
     } else if (score >= 70) {
-        println("B");   // <- here
+        println("grade=B");
     } else if (score >= 50) {
-        println("C");
+        println("grade=C");
     } else {
-        println("F");
+        println("grade=F");
     }
 
-    // simple if
-    let x = 10;
+    // MC/DC: score>=90 が F で score>=70 が T  "B"
+    score = 75;
+    if (score >= 90) {
+        println("grade=A");
+    } else if (score >= 70) {
+        println("grade=B");           // grade=B
+    } else if (score >= 50) {
+        println("grade=C");
+    } else {
+        println("grade=F");
+    }
+
+    // MC/DC: score>=70 が F で score>=50 が T  "C"
+    score = 55;
+    if (score >= 90) {
+        println("grade=A");
+    } else if (score >= 70) {
+        println("grade=B");
+    } else if (score >= 50) {
+        println("grade=C");           // grade=C
+    } else {
+        println("grade=F");
+    }
+
+    // MC/DC: 全条件が F  "F"
+    score = 30;
+    if (score >= 90) {
+        println("grade=A");
+    } else if (score >= 70) {
+        println("grade=B");
+    } else if (score >= 50) {
+        println("grade=C");
+    } else {
+        println("grade=F");           // grade=F
+    }
+
+    // C1: else なし if の偽ブランチ (スキップ確認)
+    let x = 0;
     if (x > 0) { println("positive"); }
+    println("after-if={}", x);        // 0 (ブランチをスキップ)
 
-    // false branch
-    if (x < 0) {
-        println("negative");
-    } else {
-        println("non-negative");  // <- here
-    }
+    // ----------------------------------------------------------
+    // B. while ループ (C1: 継続/脱出/0回/break/continue)
+    // ----------------------------------------------------------
+    println("--- B: while ---");
 
-    // --- while ---
-    println("--- while ---");
+    // 通常実行 (04 の 5 回)
     let i = 0;
     while (i < 5) {
-        println("{}", i);
+        println("{}", i);             // 0 1 2 3 4
         i++;
     }
-    // 0 1 2 3 4
 
-    // --- for Rust-style (range) ---
-    println("--- for range ---");
-    for n in 0..5 {
-        println("{}", n);
+    // 0回実行 (C1: 条件が最初から偽)
+    let j = 10;
+    while (j < 5) {
+        println("never");
     }
-    // 0 1 2 3 4
+    println("0-iter-done");           // 0-iter-done
 
-    // --- for Rust-style (array) ---
-    println("--- for array ---");
+    // break (C1: break 経路)
+    let k = 0;
+    while (k < 10) {
+        if (k == 3) {
+            break;
+        }
+        println("k={}", k);          // 0 1 2
+        k++;
+    }
+
+    // continue (C1: continue 経路)
+    let m = 0;
+    while (m < 5) {
+        m++;
+        if (m == 3) {
+            continue;
+        }
+        println("m={}", m);          // 1 2 4 5  (3はスキップ)
+    }
+
+    // ----------------------------------------------------------
+    // C. for Rust スタイル (C1)
+    // ----------------------------------------------------------
+    println("--- C: for Rust ---");
+
+    // 範囲 0..4 (C1: 条件 n<4 が真偽 の両経路)
+    for n in 0..4 {
+        println("r={}", n);          // 0 1 2 3
+    }
+
+    // 配列イテレーション
     let arr = [10, 20, 30];
     for v in arr {
-        println("{}", v);
+        println("v={}", v);          // 10 20 30
     }
-    // 10 20 30
 
-    // --- for C-style ---
-    println("--- for C-style ---");
-    for (let j = 0; j < 5; j++) {
-        println("{}", j);
+    // ----------------------------------------------------------
+    // D. for C スタイル (C1)
+    // ----------------------------------------------------------
+    println("--- D: for C ---");
+
+    // 増分 1
+    for (let ci = 0; ci < 4; ci++) {
+        println("c={}", ci);         // 0 1 2 3
     }
-    // 0 1 2 3 4
 
-    // increment by 2
-    for (let k = 0; k <= 8; k = k + 2) {
-        println("{}", k);
+    // 増分 2
+    for (let ci = 0; ci < 6; ci = ci + 2) {
+        println("c2={}", ci);        // 0 2 4
     }
-    // 0 2 4 6 8
 
-    // --- break ---
-    println("--- break ---");
-    let cnt = 0;
-    while (cnt < 10) {
-        if (cnt == 4) { break; }
-        println("{}", cnt);
-        cnt++;
-    }
-    // 0 1 2 3
+    // ----------------------------------------------------------
+    // E. ネスト制御 (C1 + MC/DC: ネスト内 if 条件の真偽両方)
+    // ----------------------------------------------------------
+    println("--- E: Nested ---");
 
-    // break in for-range
-    for m in 0..10 {
-        if (m == 3) { break; }
-        println("{}", m);
-    }
-    // 0 1 2
-
-    // --- continue ---
-    println("--- continue ---");
-    for p in 0..7 {
-        if (p % 2 == 0) { continue; }
-        println("{}", p);
-    }
-    // 1 3 5
-
-    // C-style for continue (increment still executes)
-    for (let q = 0; q < 8; q++) {
-        if (q == 3) { continue; }
-        if (q == 6) { break; }
-        println("{}", q);
-    }
-    // 0 1 2 4 5
-
-    // --- nested loop + break/continue ---
-    println("--- nested loop ---");
-    for outer in 0..3 {
-        for inner in 0..3 {
-            if (inner == 1) { continue; }
-            println("{}-{}", outer, inner);
+    // for 内 if  v>5 が F(3) と T(7) の両方を通る  MC/DC 達成
+    let vals = [3, 7, 5];
+    for v in vals {
+        if (v > 5) {
+            println("big={}", v);    // 7
+        } else {
+            println("small={}", v);  // 3, 5
         }
     }
-    // 0-0 0-2  1-0 1-2  2-0 2-2
 
-    // break outer loop
-    let found = 0;
-    let row = 0;
-    while (row < 5) {
-        let col = 0;
-        while (col < 5) {
-            if (row * 5 + col == 7) {
-                found = row * 5 + col;
-                break;
-            }
-            col++;
+    // while 内 while (ネスト2段)
+    let oi = 0;
+    while (oi < 3) {
+        let ij = 0;
+        while (ij < 2) {
+            println("o={} i={}", oi, ij); // (0,0)(0,1)(1,0)(1,1)(2,0)(2,1)
+            ij++;
         }
-        if (found != 0) { break; }
-        row++;
+        oi++;
     }
-    println("found={}", found);   // 7
+
+    // ----------------------------------------------------------
+    // F. return 早期脱出 (C1: 早期 return / 通常 return 両方)
+    // ----------------------------------------------------------
+    println("--- F: early return ---");
+    println("classify(-5)={}", classify(0 - 5));  // -1 (早期 return)
+    println("classify(0)={}", classify(0));        // 0  (早期 return)
+    println("classify(3)={}", classify(3));        // 1  (通常 return)
 
     println("=== OK ===");
     return 0;

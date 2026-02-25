@@ -168,5 +168,6 @@ fn main() -> i32 {
     if (va >= vb) { println("ge_true"); }  else { println("ge_false"); }
     if (va >= vc) { println("ge_true"); }  else { println("ge_false"); }
 
+    println("=== OK ===");
     return 0;
 }
