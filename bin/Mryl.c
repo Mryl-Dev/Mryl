@@ -29,10 +29,10 @@ typedef struct MrylTask {
     struct MrylTask* awaiter;
 } MrylTask;
 
-#define __SCHEDULER_CAP 256
+#define __SCHEDULER_CAP 65536
 typedef struct {
     MrylTask* queue[__SCHEDULER_CAP];
-    int head, tail;
+    uint32_t head, tail;
 } MrylScheduler;
 
 static MrylScheduler __scheduler;
@@ -164,244 +164,103 @@ MrylString to_string(int32_t n) {
     return make_mryl_string(buf);
 }
 
-// === State machine for double_value ===
-typedef struct {
-    int __state;
-    int32_t n;
-    MrylTask* __task;
-} __DoubleValue_SM;
-
-void __double_value_move_next(MrylTask* __task) {
-    __DoubleValue_SM* __sm = (__DoubleValue_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        default: return;
-    }
-    __state_0: {
-        int32_t* __res = (int32_t*)malloc(sizeof(int32_t));
-        *__res = (__sm->n * 2);
-        __task->result = (void*)__res;
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* double_value(int32_t n) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __DoubleValue_SM* __sm = (__DoubleValue_SM*)malloc(sizeof(__DoubleValue_SM));
-    memset(__sm, 0, sizeof(__DoubleValue_SM));
-    __sm->n = n;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = __double_value_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// ===== Async Lambda state machines =====
-// === State machine for __lambda_0 ===
-typedef struct {
-    int __state;
-    int32_t x;
-    MrylTask* __task;
-} __Lambda0_SM;
-
-void ____lambda_0_move_next(MrylTask* __task) {
-    __Lambda0_SM* __sm = (__Lambda0_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        default: return;
-    }
-    __state_0: {
-        println("%d", __sm->x);
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* __lambda_0(int32_t x) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Lambda0_SM* __sm = (__Lambda0_SM*)malloc(sizeof(__Lambda0_SM));
-    memset(__sm, 0, sizeof(__Lambda0_SM));
-    __sm->x = x;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = ____lambda_0_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for __lambda_1 ===
-typedef struct {
-    int __state;
-    int32_t x;
-    int32_t result;
-    MrylTask* __h_0;
-    MrylTask* __task;
-} __Lambda1_SM;
-
-void ____lambda_1_move_next(MrylTask* __task) {
-    __Lambda1_SM* __sm = (__Lambda1_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        case 1: goto __state_1;
-        default: return;
-    }
-    __state_0: {
-        __sm->__h_0 = double_value(__sm->x);
-        __task_retain(__sm->__h_0);
-        __sm->__h_0->awaiter = __task;
-        if (__sm->__h_0->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 1;
-            return;
-        }
-        goto __state_1;
-    }
-    __state_1: {
-        if (__sm->__h_0->state == MRYL_TASK_CANCELLED) {
-            __sm->result = 0;
-        } else {
-            __sm->result = *(int32_t*)__sm->__h_0->result;
-        }
-        __task_release(__sm->__h_0);
-        println("%d", __sm->result);
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
-MrylTask* __lambda_1(int32_t x) {
-    MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Lambda1_SM* __sm = (__Lambda1_SM*)malloc(sizeof(__Lambda1_SM));
-    memset(__sm, 0, sizeof(__Lambda1_SM));
-    __sm->x = x;
-    __sm->__task  = __task;
-    __task->strong_count = 1;
-    __task->weak_count   = 0;
-    __task->state        = MRYL_TASK_PENDING;
-    __task->result       = NULL;
-    __task->move_next    = ____lambda_1_move_next;
-    __task->on_cancel    = NULL;
-    __task->awaiter      = NULL;
-    __task->sm           = __sm;
-    __scheduler_post(__task);
-    return __task;
-}
-
-// === State machine for main ===
-typedef struct {
-    int __state;
-    void* greet;
-    void* compute;
-    MrylTask* __h_0;
-    MrylTask* __h_1;
-    MrylTask* __h_2;
-    MrylTask* __h_3;
-    MrylTask* __task;
-} __Main_SM;
-
-void __main_move_next(MrylTask* __task) {
-    __Main_SM* __sm = (__Main_SM*)__task->sm;
-    if (__task->state == MRYL_TASK_CANCELLED) return;
-    switch (__sm->__state) {
-        case 0: goto __state_0;
-        case 1: goto __state_1;
-        case 2: goto __state_2;
-        case 3: goto __state_3;
-        case 4: goto __state_4;
-        default: return;
-    }
-    __state_0: {
-        __sm->greet = (void*)__lambda_0;
-        __sm->__h_0 = __lambda_0(42);
-        __task_retain(__sm->__h_0);
-        __sm->__h_0->awaiter = __task;
-        if (__sm->__h_0->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 1;
-            return;
-        }
-        goto __state_1;
-    }
-    __state_1: {
-        __task_release(__sm->__h_0);
-        __sm->compute = (void*)__lambda_1;
-        __sm->__h_1 = __lambda_1(5);
-        __task_retain(__sm->__h_1);
-        __sm->__h_1->awaiter = __task;
-        if (__sm->__h_1->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 2;
-            return;
-        }
-        goto __state_2;
-    }
-    __state_2: {
-        __task_release(__sm->__h_1);
-        __sm->__h_2 = __lambda_0(100);
-        __task_retain(__sm->__h_2);
-        __sm->__h_2->awaiter = __task;
-        if (__sm->__h_2->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 3;
-            return;
-        }
-        goto __state_3;
-    }
-    __state_3: {
-        __task_release(__sm->__h_2);
-        __sm->__h_3 = __lambda_1(10);
-        __task_retain(__sm->__h_3);
-        __sm->__h_3->awaiter = __task;
-        if (__sm->__h_3->state != MRYL_TASK_COMPLETED) {
-            __sm->__state = 4;
-            return;
-        }
-        goto __state_4;
-    }
-    __state_4: {
-        __task_release(__sm->__h_3);
-        __task->state = MRYL_TASK_COMPLETED;
-        __task_release(__task);
-        if (__task->awaiter) __scheduler_post(__task->awaiter);
-        return;
-    }
-}
-
 int main(void) {
-    __scheduler_init();
-    MrylTask* __main_task = (MrylTask*)malloc(sizeof(MrylTask));
-    __Main_SM* __main_sm = (__Main_SM*)malloc(sizeof(__Main_SM));
-    memset(__main_sm, 0, sizeof(__Main_SM));
-    __main_sm->__task  = __main_task;
-    __main_task->strong_count = 2;
-    __main_task->weak_count   = 0;
-    __main_task->state        = MRYL_TASK_PENDING;
-    __main_task->result       = NULL;
-    __main_task->move_next    = __main_move_next;
-    __main_task->on_cancel    = NULL;
-    __main_task->awaiter      = NULL;
-    __main_task->sm           = __main_sm;
-    __scheduler_post(__main_task);
-    __scheduler_run();
-    __task_release(__main_task);
+    println("=== 15: Loop Boundary Tests ===");
+    println("--- while ---");
+    int32_t w0 = 0;
+    int32_t wi0 = 0;
+    while (wi0 < 0) {
+        w0 = (w0 + wi0);
+        wi0++;
+    }
+    println("while_0iter_sum=%d", w0);
+    int32_t w1 = 0;
+    int32_t wi1 = 0;
+    while (wi1 < 1) {
+        w1 = (w1 + wi1);
+        wi1++;
+    }
+    println("while_1iter_sum=%d", w1);
+    int32_t w5 = 0;
+    int32_t wi5 = 0;
+    while (wi5 < 5) {
+        w5 = (w5 + wi5);
+        wi5++;
+    }
+    println("while_5iter_sum=%d", w5);
+    int32_t w10 = 0;
+    int32_t wi10 = 0;
+    while (wi10 < 10) {
+        w10 = (w10 + wi10);
+        wi10++;
+    }
+    println("while_10iter_sum=%d", w10);
+    println("--- for range ---");
+    int32_t fr0 = 0;
+    for (int _n0 = 0; _n0 < 0; _n0++) {
+        fr0 = (fr0 + 1);
+    }
+    println("range_0iter_count=%d", fr0);
+    int32_t fr1 = 0;
+    for (int _n1 = 0; _n1 < 1; _n1++) {
+        fr1 = (fr1 + 1);
+    }
+    println("range_1iter_count=%d", fr1);
+    int32_t fr5 = 0;
+    for (int _n5 = 0; _n5 < 5; _n5++) {
+        fr5 = (fr5 + 1);
+    }
+    println("range_5iter_count=%d", fr5);
+    int32_t fr5s = 0;
+    for (int ns = 0; ns < 5; ns++) {
+        fr5s = (fr5s + ns);
+    }
+    println("range_5iter_sum=%d", fr5s);
+    println("--- for C-style ---");
+    int32_t fc0 = 0;
+    for (int32_t j0 = 0; j0 < 0; j0++) {
+        fc0 = (fc0 + 1);
+    }
+    println("cfor_0iter_count=%d", fc0);
+    int32_t fc1 = 0;
+    for (int32_t j1 = 0; j1 < 1; j1++) {
+        fc1 = (fc1 + 1);
+    }
+    println("cfor_1iter_count=%d", fc1);
+    int32_t fc_last = (-1);
+    for (int32_t j2 = 0; j2 <= 8; j2 = (j2 + 2)) {
+        fc_last = j2;
+    }
+    println("cfor_step2_last=%d", fc_last);
+    println("--- break ---");
+    int32_t br_last = (-1);
+    for (int nb = 0; nb < 10; nb++) {
+        if (nb == 3) {
+            break;
+        }
+        br_last = nb;
+    }
+    println("break_last=%d", br_last);
+    int32_t br0 = 0;
+    for (int nb0 = 0; nb0 < 10; nb0++) {
+        if (nb0 == 0) {
+            break;
+        }
+        br0 = (br0 + 1);
+    }
+    println("break_0iter_count=%d", br0);
+    println("--- continue ---");
+    int32_t cont = 0;
+    int32_t cont_last = (-1);
+    for (int nc = 0; nc < 5; nc++) {
+        if ((nc % 2) == 0) {
+            continue;
+        }
+        cont = (cont + 1);
+        cont_last = nc;
+    }
+    println("continue_odd_count=%d", cont);
+    println("continue_last=%d", cont_last);
+    println("=== OK ===");
     return 0;
 }
