@@ -11,7 +11,8 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # Get input file from command line argument, default to advanced_methods.ml
-input_file = sys.argv[1] if len(sys.argv) > 1 else "./tests/test_10_async_await.ml"
+# input_file = sys.argv[1] if len(sys.argv) > 1 else "./tests/test_10_async_await.ml"
+input_file = sys.argv[1] if len(sys.argv) > 1 else "./my/async.ml"
 
 with open(input_file, "r", encoding="utf-8-sig") as f:
     source = f.read()
@@ -48,6 +49,10 @@ except MrylRuntimeError as e:
     print(e.format_detail(), file=sys.stderr)
     python_exit_code = 1
     # C code generation is still performed so the compiled binary can reproduce the error
+except Exception as e:
+    # 例: asyncio event loop 問題など — Python 側だけの問題でも C コード生成を続行
+    print(f"\n[WARNING] Python interpreter error: {e}")
+    python_exit_code = 1
 
 # C Code Generation
 print("\n=== C Code Generation ===")

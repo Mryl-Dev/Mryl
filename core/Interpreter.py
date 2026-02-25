@@ -238,6 +238,8 @@ class Interpreter:
 
             try:
                 loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    raise RuntimeError("already running")
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -301,6 +303,8 @@ class Interpreter:
                 return None
             try:
                 loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    raise RuntimeError("already running")
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -808,6 +812,8 @@ class Interpreter:
                 if loop is None:
                     try:
                         loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            raise RuntimeError("already running")
                     except RuntimeError:
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)

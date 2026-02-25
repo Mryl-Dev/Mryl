@@ -49,17 +49,201 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
         segments.append((current, None))
         return segments
 
+    # ------------------------------------------------------------------ #
+    #  SM state builder helpers                                           #
+    # ------------------------------------------------------------------ #
+
+    def _collect_sm_fields_recursive(self, stmts, sm_fields, seen_names=None):
+        """stmts を再帰走査して SM フィールドを収集する (ループ変数も含む)。"""
+        if seen_names is None:
+            seen_names = set()
+        for stmt in stmts:
+            cls = stmt.__class__.__name__
+            if cls == 'LetDecl':
+                if stmt.name not in seen_names:
+                    seen_names.add(stmt.name)
+                    sm_fields.append((self._sm_let_c_type(stmt), stmt.name, 'any'))
+            elif cls == 'ForStmt':
+                if stmt.variable and stmt.variable not in seen_names:
+                    seen_names.add(stmt.variable)
+                    sm_fields.append(('int32_t', stmt.variable, 'i32'))
+                if stmt.body:
+                    self._collect_sm_fields_recursive(stmt.body.statements, sm_fields, seen_names)
+            elif cls == 'WhileStmt':
+                if stmt.body:
+                    self._collect_sm_fields_recursive(stmt.body.statements, sm_fields, seen_names)
+            elif cls == 'IfStmt':
+                if stmt.then_block:
+                    self._collect_sm_fields_recursive(stmt.then_block.statements, sm_fields, seen_names)
+                if stmt.else_block:
+                    eb_cls = stmt.else_block.__class__.__name__
+                    eb_stmts = [stmt.else_block] if eb_cls == 'IfStmt' \
+                               else stmt.else_block.statements
+                    self._collect_sm_fields_recursive(eb_stmts, sm_fields, seen_names)
+
+    def _build_sm_states(self, stmts):
+        """stmts から SM state リストと for ループ初期化リストを返す。
+
+        state dict:
+          'id'    : int
+          'items' : [('S', stmt)
+                    |('LC', cond_expr, end_id)
+                    |('LU', update_expr)
+                    |('AR', await_stmt, handle_name)]
+          'term'  : ('C',)
+                  | ('G', target_id)
+                  | ('A', await_stmt, handle_name, resume_id)
+
+        for_inits : [(var_name, init_expr_node)]
+        """
+        states     = []
+        for_inits  = []
+
+        def new_s():
+            s = {'id': len(states), 'items': [], 'term': None}
+            states.append(s)
+            return s
+
+        def process(stmts_in, cur):
+            for stmt in stmts_in:
+                cls = stmt.__class__.__name__
+                is_await = (
+                    (cls == 'LetDecl' and stmt.init_expr and
+                     stmt.init_expr.__class__.__name__ == 'AwaitExpr') or
+                    (cls == 'ExprStmt' and stmt.expr.__class__.__name__ == 'AwaitExpr')
+                )
+                if is_await:
+                    resume = new_s()
+                    handle = f"__h_{cur['id']}"
+                    self.sm_await_handles[cur['id']] = handle
+                    resume['items'].append(('AR', stmt, handle))
+                    cur['term'] = ('A', stmt, handle, resume['id'])
+                    cur = resume
+                elif cls == 'ForStmt' and stmt.is_c_style and \
+                        self._stmts_have_await(stmt.body.statements):
+                    # for-loop の変数を初期化リストへ
+                    for_inits.append((stmt.variable, stmt.iterable))
+                    head       = new_s()   # loop head  (condition check)
+                    end        = new_s()   # after loop
+                    cur['term'] = ('G', head['id'])
+                    body_entry = new_s()   # loop body
+                    head['items'].append(('LC', stmt.condition, end['id']))
+                    head['term'] = ('G', body_entry['id'])
+                    body_exit   = process(stmt.body.statements, body_entry)
+                    if body_exit is not None:
+                        body_exit['items'].append(('LU', stmt.update))
+                        body_exit['term'] = ('G', head['id'])
+                    cur = end
+                elif cls == 'WhileStmt' and \
+                        self._stmts_have_await(stmt.body.statements):
+                    head       = new_s()
+                    end        = new_s()
+                    cur['term'] = ('G', head['id'])
+                    body_entry = new_s()
+                    head['items'].append(('LC', stmt.condition, end['id']))
+                    head['term'] = ('G', body_entry['id'])
+                    body_exit   = process(stmt.body.statements, body_entry)
+                    if body_exit is not None:
+                        body_exit['term'] = ('G', head['id'])
+                    cur = end
+                else:
+                    cur['items'].append(('S', stmt))
+            return cur
+
+        cur0  = new_s()
+        final = process(stmts, cur0)
+        if final is not None and final['term'] is None:
+            final['term'] = ('C',)
+        return states, for_inits
+
+    def _emit_single_sm_state(self, state, func, has_return_val: bool):
+        """1 つの SM state の C コードを出力する。"""
+        self._emit(f"__state_{state['id']}: {{")
+        self.indent_level += 1
+
+        for item in state['items']:
+            kind = item[0]
+            if kind == 'S':
+                self._generate_sm_stmt(item[1], func, has_return_val)
+
+            elif kind == 'LC':
+                # ループ条件チェック: 偽なら end_id へジャンプ
+                cond_code = self._strip_outer_parens(self._generate_expr(item[1]))
+                end_id    = item[2]
+                self._emit(f"if (!({cond_code})) {{")
+                self.indent_level += 1
+                self._emit(f"__sm->__state = {end_id};")
+                self._emit(f"goto __state_{end_id};")
+                self.indent_level -= 1
+                self._emit("}")
+
+            elif kind == 'LU':
+                # ループ更新式
+                update = item[1]
+                u_cls  = update.__class__.__name__
+                if u_cls == 'Assignment':
+                    target = self._generate_expr(update.target)
+                    val    = self._generate_expr(update.expr)
+                    self._emit(f"{target} = {val};")
+                else:
+                    code = self._strip_outer_parens(self._generate_expr(update))
+                    self._emit(f"{code};")
+
+            elif kind == 'AR':
+                # await resume: 結果取得 + handle release
+                await_stmt  = item[1]
+                handle_name = item[2]        # '__h_N'
+                handle      = f"__sm->{handle_name}"
+                a_cls       = await_stmt.__class__.__name__
+                if a_cls == 'LetDecl':
+                    var = await_stmt.name
+                    if await_stmt.type_node and await_stmt.type_node.name != 'void':
+                        ctype = self._type_to_c(await_stmt.type_node)
+                        self._emit(f"if ({handle}->state == MRYL_TASK_CANCELLED) {{")
+                        self.indent_level += 1
+                        self._emit(f"__sm->{var} = 0;")
+                        self.indent_level -= 1
+                        self._emit("} else {")
+                        self.indent_level += 1
+                        self._emit(f"__sm->{var} = *({ctype}*){handle}->result;")
+                        self.indent_level -= 1
+                        self._emit("}")
+                self._emit(f"__task_release({handle});")
+
+        # ターミネータ
+        term = state['term']
+        if term is None or term[0] == 'C':
+            has_explicit_return = any(
+                item[0] == 'S' and item[1].__class__.__name__ == 'ReturnStmt'
+                for item in state['items']
+            )
+            if not has_explicit_return:
+                self._emit_task_complete(func, has_return_val)
+        elif term[0] == 'G':
+            self._emit(f"goto __state_{term[1]};")
+        elif term[0] == 'A':
+            # term = ('A', await_stmt, handle_name, resume_id)
+            self._emit_await_setup(term[1], term[3], state['id'])
+            self._emit(f"goto __state_{term[3]};")
+
+        self.indent_level -= 1
+        self._emit("}")
+
+    # ------------------------------------------------------------------ #
+    #  Main SM generator                                                   #
+    # ------------------------------------------------------------------ #
+
     def _generate_async_state_machine(self, func):
-        """async 関数をステートマシン形式の C コードとして出力する """
+        """async 関数をステートマシン形式の C コードとして出力する。
+        for/while ループ内の await も完全対応。"""
         func_name      = func.name
         is_main        = (func_name == 'main')
         has_return_val = (not is_main) and \
                          func.return_type and func.return_type.name != 'void'
-
         sm_struct  = f"__{self._to_pascal(func_name)}_SM"
         move_next  = f"__{func_name}_move_next"
 
-        # SM フィールド収集
+        # --- SM フィールド収集 (ループ変数も再帰的に収集) ---
         sm_fields = []
         if not is_main:
             for p in (func.params or []):
@@ -68,43 +252,31 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
                     p.name,
                     p.type_node.name if p.type_node else 'any',
                 ))
-        for stmt in (func.body.statements if func.body else []):
-            if stmt.__class__.__name__ == 'LetDecl':
-                sm_fields.append((self._sm_let_c_type(stmt), stmt.name, 'any'))
-
-        stmts_preview    = func.body.statements if func.body else []
-        sm_await_handles = {}
-        for i, (_, aw) in enumerate(self._split_by_await(stmts_preview)):
-            if aw is None:
-                continue
-            aw_cls = aw.__class__.__name__
-            inner  = aw.expr.expr if aw_cls == 'ExprStmt' else aw.init_expr.expr
-            if inner.__class__.__name__ == 'FunctionCall':
-                hf = f"__h_{i}"
-                sm_await_handles[i] = hf
-                sm_fields.append(('MrylTask*', hf, 'any'))
-        self.sm_await_handles = sm_await_handles
-
+        stmts = func.body.statements if func.body else []
+        self.sm_await_handles = {}
+        self._collect_sm_fields_recursive(stmts, sm_fields)
         for (_, fname, mtype) in sm_fields:
             self.env[-1][fname] = mtype
 
-        # 1. SM 構造体を出力
+        # --- SM ステート構築 ---
+        states, for_inits = self._build_sm_states(stmts)
+        num_states = len(states)
+
+        # --- 1. SM 構造体を出力 ---
         self._emit(f"// === State machine for {func_name} ===")
         self._emit(f"typedef struct {{")
         self.indent_level += 1
         self._emit("int __state;")
         for (ctype, fname, _) in sm_fields:
             self._emit(f"{ctype} {fname};")
+        for handle_name in self.sm_await_handles.values():
+            self._emit(f"MrylTask* {handle_name};")
         self._emit("MrylTask* __task;")
         self.indent_level -= 1
         self._emit(f"}} {sm_struct};")
         self._emit("")
 
-        # 2. move_next 関数を出力
-        stmts    = func.body.statements if func.body else []
-        segments = self._split_by_await(stmts)
-        num_states = len(segments)
-
+        # --- 2. move_next 関数を出力 ---
         self._emit(f"void {move_next}(MrylTask* __task) {{")
         self.indent_level += 1
         self._emit(f"{sm_struct}* __sm = ({sm_struct}*)__task->sm;")
@@ -119,42 +291,23 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
 
         self.sm_mode = True
         self.sm_vars = {fname for (_, fname, _) in sm_fields}
+        for handle_name in self.sm_await_handles.values():
+            self.sm_vars.add(handle_name)
 
-        for i, (pre_stmts, await_stmt) in enumerate(segments):
-            self._emit(f"__state_{i}: {{")
-            self.indent_level += 1
-
-            if i > 0:
-                self._emit_await_resume(segments[i - 1][1], i - 1)
-
-            for stmt in pre_stmts:
-                self._generate_sm_stmt(stmt, func, has_return_val)
-
-            if await_stmt is not None:
-                self._emit_await_setup(await_stmt, i + 1, i)
-                self._emit(f"goto __state_{i + 1};")
-            else:
-                has_explicit_return = any(
-                    s.__class__.__name__ == 'ReturnStmt' for s in pre_stmts
-                )
-                if not has_explicit_return:
-                    self._emit_task_complete(func, has_return_val)
-
-            self.indent_level -= 1
-            self._emit("}")
+        for state in states:
+            self._emit_single_sm_state(state, func, has_return_val)
 
         self.sm_mode = False
         self.sm_vars = set()
-
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
 
-        # 3. ファクトリ関数 or main エントリポイント
+        # --- 3. ファクトリ関数 or main エントリポイントを出力 ---
         if is_main:
-            self._emit_main_sm_entry(sm_struct, move_next)
+            self._emit_main_sm_entry(sm_struct, move_next, for_inits)
         else:
-            self._emit_task_factory(func, sm_struct, move_next)
+            self._emit_task_factory(func, sm_struct, move_next, for_inits)
 
     def _emit_await_setup(self, await_stmt, next_state: int, await_index: int = 0):
         """await セットアップ(タスクの awaiter 設定 + サスペンド)を出力する """
@@ -260,18 +413,21 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
             self._emit("if (__task->awaiter) __scheduler_post(__task->awaiter);")
             self._emit("return;")
 
-    def _emit_task_factory(self, func, sm_struct: str, move_next: str):
+    def _emit_task_factory(self, func, sm_struct: str, move_next: str, for_inits=None):
         """タスクファクトリ関数を出力する (async fn の entry point) """
         func_name  = func.name
         params     = [f"{self._type_to_c(p.type_node)} {p.name}" for p in (func.params or [])]
         params_str = ", ".join(params) if params else "void"
-        self._emit(f"MrylTask* {func_name}({params_str}) {{")
+        self._emit(f"MrylTask* {func_name}({params_str}) {{") 
         self.indent_level += 1
         self._emit(f"MrylTask* __task = (MrylTask*)malloc(sizeof(MrylTask));")
         self._emit(f"{sm_struct}* __sm = ({sm_struct}*)malloc(sizeof({sm_struct}));")
         self._emit(f"memset(__sm, 0, sizeof({sm_struct}));")
         for p in (func.params or []):
             self._emit(f"__sm->{p.name} = {p.name};")
+        for (var_name, init_expr) in (for_inits or []):
+            init_code = self._generate_expr(init_expr)
+            self._emit(f"__sm->{var_name} = {init_code};")
         self._emit(f"__sm->__task  = __task;")
         self._emit(f"__task->strong_count = 1;")
         self._emit(f"__task->weak_count   = 0;")
@@ -287,7 +443,7 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
         self._emit("}")
         self._emit("")
 
-    def _emit_main_sm_entry(self, sm_struct: str, move_next: str):
+    def _emit_main_sm_entry(self, sm_struct: str, move_next: str, for_inits=None):
         """main 関数のスケジューラエントリポイントを出力する """
         self._emit("int main(void) {")
         self.indent_level += 1
@@ -295,6 +451,9 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
         self._emit(f"MrylTask* __main_task = (MrylTask*)malloc(sizeof(MrylTask));")
         self._emit(f"{sm_struct}* __main_sm = ({sm_struct}*)malloc(sizeof({sm_struct}));")
         self._emit(f"memset(__main_sm, 0, sizeof({sm_struct}));")
+        for (var_name, init_expr) in (for_inits or []):
+            init_code = self._generate_expr(init_expr)
+            self._emit(f"__main_sm->{var_name} = {init_code};")
         self._emit(f"__main_sm->__task  = __main_task;")
         self._emit(f"__main_task->strong_count = 2;")
         self._emit(f"__main_task->weak_count   = 0;")
@@ -338,10 +497,10 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
             "    struct MrylTask* awaiter;",
             "} MrylTask;",
             "",
-            "#define __SCHEDULER_CAP 256",
+            "#define __SCHEDULER_CAP 65536",
             "typedef struct {",
             "    MrylTask* queue[__SCHEDULER_CAP];",
-            "    int head, tail;",
+            "    uint32_t head, tail;",
             "} MrylScheduler;",
             "",
             "static MrylScheduler __scheduler;",

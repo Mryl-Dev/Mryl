@@ -9,16 +9,32 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
     """
 
     def _body_has_await(self, body) -> bool:
-        """関数ボディに await 文が含まれるかどうかを返す。"""
+        """関数ボディに await 文が含まれるかどうかを返す（ループ内も再帰検索）。"""
         if not body:
             return False
-        for stmt in body.statements:
+        return self._stmts_have_await(body.statements)
+
+    def _stmts_have_await(self, stmts) -> bool:
+        """文リストに await が含まれるかを再帰的に検査する。"""
+        for stmt in stmts:
             cls = stmt.__class__.__name__
             if cls == 'LetDecl' and stmt.init_expr and \
                stmt.init_expr.__class__.__name__ == 'AwaitExpr':
                 return True
             if cls == 'ExprStmt' and stmt.expr.__class__.__name__ == 'AwaitExpr':
                 return True
+            if cls in ('ForStmt', 'WhileStmt') and stmt.body:
+                if self._stmts_have_await(stmt.body.statements):
+                    return True
+            if cls == 'IfStmt':
+                if stmt.then_block and self._stmts_have_await(stmt.then_block.statements):
+                    return True
+                if stmt.else_block:
+                    eb_cls = stmt.else_block.__class__.__name__
+                    eb_stmts = [stmt.else_block] if eb_cls == 'IfStmt' \
+                               else stmt.else_block.statements
+                    if self._stmts_have_await(eb_stmts):
+                        return True
         return False
 
     def _collect_captures(self, node, param_names: set) -> dict:
