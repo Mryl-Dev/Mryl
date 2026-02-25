@@ -381,6 +381,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         if klass == "EnumPattern":
             enum_name    = pattern.enum_name
             variant_name = pattern.variant_name
+            # Result<T,E> の Ok/Err パターン
+            if enum_name in ("Ok", "Err"):
+                is_ok    = (enum_name == "Ok")
+                cond     = f"{mv}.is_ok" if is_ok else f"!{mv}.is_ok"
+                field    = "ok_val" if is_ok else "err_val"
+                bindings = [f"__auto_type {name} = {mv}.data.{field};" for name in pattern.bindings]
+                return cond, bindings
             enum_decl    = self.enums.get(enum_name)
             has_data     = enum_decl and any(v.fields for v in enum_decl.variants)
             if has_data:
@@ -453,8 +460,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return (
                     f"({{ __auto_type __uw = {obj_code}; "
                     f"if (!__uw.is_ok) {{ "
-                    f"char __em[64]; snprintf(__em, sizeof(__em), \"Err(%d)\", (int)__uw.data.err_val); "
-                    f'mryl_panic("Error", __em, __func__, __FILE__, __LINE__); }} '
+                    f'mryl_panic("Error", "try() called on Err value", __func__, __FILE__, __LINE__); }} '
                     f"__uw.data.ok_val; }})"
                 )
             if expr.method == "unwrap_err":
