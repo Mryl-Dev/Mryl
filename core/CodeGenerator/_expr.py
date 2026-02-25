@@ -290,12 +290,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 has_catch_all = True
 
             if cond == "1":
-                kw        = "else if (1)" if not first else "if (1)"
+                kw        = "else" if not first else ""
                 cond_part = ""
             else:
                 kw        = "else if" if not first else "if"
                 cond_part = f" ({cond})"
-            lines.append(f"    {kw}{cond_part} {{")
+            if kw:
+                lines.append(f"    {kw}{cond_part} {{")
+            else:
+                lines.append("    {")
             for b in bindings:
                 lines.append(f"        {b}")
             body_c = self._generate_expr(arm.body)
