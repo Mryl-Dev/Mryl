@@ -143,6 +143,19 @@ class CodeGenerator(
         for struct in program.structs:
             self._generate_struct(struct)
 
+        # ジェネリック構造体の具体化 typedef を出力 (例: Box_i32, Pair_i32_string)
+        generic_uses = self._scan_generic_struct_uses(program)
+        for (sname, targs), fields in generic_uses.items():
+            mono = f"{sname}_{'_'.join(targs)}"
+            self._emit(f"// Generic struct {sname}<{', '.join(targs)}>")
+            self._emit("typedef struct {")
+            self.indent_level += 1
+            for ctype, fname in fields:
+                self._emit(f"{ctype} {fname};")
+            self.indent_level -= 1
+            self._emit(f"}} {mono};")
+            self._emit("")
+
         # Built-in 関数の出力
         self._emit_builtin_functions()
 

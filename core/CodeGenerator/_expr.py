@@ -240,7 +240,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             f".{name} = {self._generate_expr(value)}"
             for name, value in expr.fields
         )
-        return f"({expr.struct_name}){{ {fields} }}"
+        # ジェネリック構造体の具体化名を使用 (例: Box<i32> → Box_i32)
+        if getattr(expr, 'type_args', []):
+            suffix = "_".join(t if isinstance(t, str) else t.name for t in expr.type_args)
+            struct_c_name = f"{expr.struct_name}_{suffix}"
+        else:
+            struct_c_name = expr.struct_name
+        return f"({struct_c_name}){{ {fields} }}"
 
     def _generate_match_expr(self, expr) -> str:
         """match 式を GCC compound statement 式として生成する """

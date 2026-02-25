@@ -9,6 +9,8 @@ class CodeGeneratorStructMixin(_CodeGeneratorBase):
 
     def _generate_struct(self, struct):
         """構造体宣言を typedef struct として出力する。"""
+        if getattr(struct, 'type_params', None):
+            return  # ジェネリック構造体は具体化時に _scan_generic_struct_uses で出力
         self._emit(f"// Struct: {struct.name}")
         self._emit(f"typedef struct {{")
         self.indent_level += 1

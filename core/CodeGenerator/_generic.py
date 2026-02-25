@@ -235,3 +235,95 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
         elif expr_class == "ArrayAccess":
             self._scan_expr_for_generic_calls(expr.array)
             self._scan_expr_for_generic_calls(expr.index)
+
+    # ------------------------------------------------------------------
+    # ジェネリック構造体の具体化収集
+    # ------------------------------------------------------------------
+    def _scan_generic_struct_uses(self, program):
+        """プログラム全体を走査してジェネリック構造体の具体化を収集する。
+        戻り値: OrderedDict  {(struct_name, (type_arg_names...)): [(c_type, field_name), ...]}
+        """
+        from collections import OrderedDict
+        result = OrderedDict()
+        struct_map = {s.name: s for s in program.structs}
+
+        def scan_expr(e):
+            if e is None:
+                return
+            cls = e.__class__.__name__
+            if cls == "StructInit" and getattr(e, 'type_args', []):
+                key = (e.struct_name, tuple(t if isinstance(t, str) else t.name for t in e.type_args))
+                if key not in result:
+                    s = struct_map.get(e.struct_name)
+                    if s and getattr(s, 'type_params', None):
+                        subst = dict(zip(s.type_params, [
+                            (t if isinstance(t, str) else t.name) for t in e.type_args
+                        ]))
+                        fields = []
+                        for f in s.fields:
+                            resolved_name = subst.get(f.type_node.name, None)
+                            if resolved_name:
+                                c_type = self._type_to_c_base(resolved_name)
+                            else:
+                                c_type = self._type_to_c(f.type_node)
+                            fields.append((c_type, f.name))
+                        result[key] = fields
+                for _, v in (e.fields or []):
+                    scan_expr(v)
+            elif cls == "FunctionCall":
+                for a in (e.args or []):
+                    scan_expr(a)
+            elif cls == "BinaryOp":
+                scan_expr(e.left)
+                scan_expr(e.right)
+            elif cls == "UnaryOp":
+                scan_expr(getattr(e, 'operand', None))
+            elif cls == "MethodCall":
+                scan_expr(e.obj)
+                for a in (e.args or []):
+                    scan_expr(a)
+            elif cls == "ArrayLiteral":
+                for elem in (e.elements or []):
+                    scan_expr(elem)
+            elif cls == "MatchExpr":
+                scan_expr(e.scrutinee)
+                for arm in e.arms:
+                    scan_expr(arm.body)
+
+        def scan_stmt(s):
+            if s is None:
+                return
+            cls = s.__class__.__name__
+            if cls == "LetDecl":
+                scan_expr(s.init_expr)
+            elif cls == "ExprStmt":
+                scan_expr(s.expr)
+            elif cls == "ReturnStmt":
+                scan_expr(s.expr)
+            elif cls == "AssignStmt":
+                scan_expr(getattr(s, 'value', None))
+            elif cls == "IfStmt":
+                scan_expr(s.condition)
+                if s.then_block:
+                    for st in s.then_block.statements:
+                        scan_stmt(st)
+                if s.else_block:
+                    eb = s.else_block
+                    if eb.__class__.__name__ == "IfStmt":
+                        scan_stmt(eb)
+                    else:
+                        for st in eb.statements:
+                            scan_stmt(st)
+            elif cls in ("ForStmt", "WhileStmt"):
+                if s.body:
+                    for st in s.body.statements:
+                        scan_stmt(st)
+            elif cls == "Block":
+                for st in s.statements:
+                    scan_stmt(st)
+
+        for func in program.functions:
+            if func.body:
+                for stmt in func.body.statements:
+                    scan_stmt(stmt)
+        return result

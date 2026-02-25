@@ -149,7 +149,11 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             self.array_sizes[stmt.name] = array_size
             self.env[-1][stmt.name] = "i32"
         else:
-            if var_type in ("any",) and stmt.init_expr is not None:
+            # ジェネリック構造体の具体化 (例: Box<i32> → var_type = "Box_i32")
+            if init_expr_class == "StructInit" and getattr(stmt.init_expr, 'type_args', []):
+                suffix = "_".join(t if isinstance(t, str) else t.name for t in stmt.init_expr.type_args)
+                var_type = f"{stmt.init_expr.struct_name}_{suffix}"
+            elif var_type in ("any",) and stmt.init_expr is not None:
                 inferred_mryl = self._infer_expr_type(stmt.init_expr)
                 if inferred_mryl == "string":
                     var_type = "MrylString"
