@@ -145,9 +145,20 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             array_size  = len(array_lit.elements)
             elements    = [self._generate_expr(elem) for elem in array_lit.elements]
             init_values = "{" + ", ".join(elements) + "}"
-            self._emit(f"int32_t {stmt.name}[{array_size}] = {init_values};")
+            # 要素型を推論する (文字列配列は MrylString、数値配列は int32_t など)
+            _c_elem_map = {
+                "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
+                "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
+                "f32": "float", "f64": "double", "string": "MrylString", "bool": "int",
+            }
+            if array_lit.elements:
+                elem_mryl = self._infer_expr_type(array_lit.elements[0])
+            else:
+                elem_mryl = "i32"
+            elem_c = _c_elem_map.get(elem_mryl, "int32_t")
+            self._emit(f"{elem_c} {stmt.name}[{array_size}] = {init_values};")
             self.array_sizes[stmt.name] = array_size
-            self.env[-1][stmt.name] = "i32"
+            self.env[-1][stmt.name] = elem_mryl
         else:
             # ジェネリック構造体の具体化 (例: Box<i32> → var_type = "Box_i32")
             if init_expr_class == "StructInit" and getattr(stmt.init_expr, 'type_args', []):

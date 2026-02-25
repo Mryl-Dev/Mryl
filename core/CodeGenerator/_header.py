@@ -72,13 +72,14 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
             "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
             "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
             "f32": "float", "f64": "double", "bool": "int",
+            "string": "MrylString",
         }
         self._emit("// ============================================================")
         self._emit("// Dynamic array (MrylVec_<T>) types and helpers")
         self._emit("// ============================================================")
         self._emit("")
         for et in sorted(elem_types):
-            ct = _c_map.get(et, "int32_t")
+            ct = _c_map.get(et, et if et not in _c_map else _c_map[et])
             T, C = et, ct
             self._emit(f"typedef struct {{ {C}* data; int32_t len; int32_t cap; }} MrylVec_{T};")
             self._emit(f"static inline MrylVec_{T} mryl_vec_{T}_new(void) {{")
@@ -100,9 +101,11 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
             self._emit(f"static inline {C} mryl_vec_{T}_pop(MrylVec_{T}* v) {{")
             self._emit(f"    return v->data[--v->len];")
             self._emit(f"}}")
-            self._emit(f"static inline void mryl_vec_{T}_remove(MrylVec_{T}* v, int32_t idx) {{")
+            self._emit(f"static inline {C} mryl_vec_{T}_remove(MrylVec_{T}* v, int32_t idx) {{")
+            self._emit(f"    {C} __val = v->data[idx];")
             self._emit(f"    for (int32_t i = idx; i < v->len - 1; i++) v->data[i] = v->data[i+1];")
             self._emit(f"    v->len--;")
+            self._emit(f"    return __val;")
             self._emit(f"}}")
             self._emit(f"static inline void mryl_vec_{T}_insert(MrylVec_{T}* v, int32_t idx, {C} val) {{")
             self._emit(f"    if (v->len == v->cap) {{")
