@@ -215,7 +215,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                     for a in format_args:
                         arg_type = self._infer_expr_type(a)
                         arg_code = self._generate_expr(a)
-                        args.append(f"{arg_code}.data" if arg_type in ("string", "str") else arg_code)
+                        if arg_type in ("string", "str"):
+                            args.append(f"{arg_code}.data")
+                        elif arg_type == "bool":
+                            args.append(f"({arg_code} ? \"true\" : \"false\")")
+                        else:
+                            args.append(arg_code)
                     return f'{expr.name}({", ".join(args)})'
                 fmt_c = ""
                 for i, part in enumerate(parts[:-1]):
@@ -227,7 +232,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 for a in format_args:
                     arg_type = self._infer_expr_type(a)
                     arg_code = self._generate_expr(a)
-                    c_args.append(f"{arg_code}.data" if arg_type in ("string", "str") else arg_code)
+                    if arg_type in ("string", "str"):
+                        c_args.append(f"{arg_code}.data")
+                    elif arg_type == "bool":
+                        c_args.append(f"({arg_code} ? \"true\" : \"false\")")
+                    else:
+                        c_args.append(arg_code)
                 return f'{expr.name}({", ".join(c_args)})'
             else:
                 escaped = self._c_escape(first_arg.value)
@@ -239,7 +249,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f'{expr.name}("%s", {arg_code}.data)'
             elif arg_type in ("f32", "f64", "float"):
                 arg_code = self._generate_expr(first_arg)
-                return f'{expr.name}("%f", {arg_code})'
+                return f'{expr.name}("%g", {arg_code})'
+            elif arg_type == "bool":
+                arg_code = self._generate_expr(first_arg)
+                return f'{expr.name}("%s", ({arg_code} ? "true" : "false"))'
             else:
                 arg_code = self._generate_expr(first_arg)
                 return f'{expr.name}("%d", {arg_code})'

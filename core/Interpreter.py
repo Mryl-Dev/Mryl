@@ -1304,7 +1304,13 @@ class Interpreter:
                 # Found {} placeholder
                 if arg_index >= len(rest_args):
                     raise RuntimeError("Not enough arguments for format string")
-                result.append(str(rest_args[arg_index]))
+                v = rest_args[arg_index]
+                if isinstance(v, bool):
+                    result.append("true" if v else "false")
+                elif isinstance(v, float):
+                    result.append(f"{v:g}")
+                else:
+                    result.append(str(v))
                 arg_index += 1
                 i += 2
             elif format_str[i] == '\\' and i < len(format_str) - 1:

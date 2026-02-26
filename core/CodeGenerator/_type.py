@@ -64,7 +64,7 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
         if t in ("string", "str"):
             return "%s"
         if t in ("f32", "f64", "float"):
-            return "%f"
+            return "%g"
         if t in ("i64",):
             return "%lld"
         if t in ("u64",):
@@ -72,7 +72,7 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
         if t in ("u32", "u16", "u8"):
             return "%u"
         if t in ("bool",):
-            return "%d"
+            return "%s"
         return "%d"
 
     def _emit_result_typedefs(self):
