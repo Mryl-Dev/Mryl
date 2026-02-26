@@ -37,21 +37,17 @@ fn concat_three(a: string, b: string, c: string) -> string {
 //   コンパイルエラー。strcmp(a.data, b.data) への変換が必要。
 // ----------------------------------------------------------
 fn str_eq(a: string, b: string) -> i32 {
-    // [SKIP Bug#16] a == b  →  C: invalid operands to binary ==
-    //if (a == b) {
-    //    return 1;
-    //}
-    //return 0;
-    return 0;  // Bug#16 修正後にコメント外し
+    if (a == b) {
+        return 1;
+    }
+    return 0;
 }
 
 fn str_neq(a: string, b: string) -> i32 {
-    // [SKIP Bug#16] a != b  →  C: invalid operands to binary !=
-    //if (a != b) {
-    //    return 1;
-    //}
-    //return 0;
-    return 1;  // Bug#16 修正後にコメント外し
+    if (a != b) {
+        return 1;
+    }
+    return 0;
 }
 
 // ----------------------------------------------------------
@@ -74,14 +70,13 @@ fn sign_string(n: i32) -> string {
 // [SKIP Bug#16] str_len_is3 内の s == "abc" 等がコンパイルエラー
 //   → str_len_is3 は i32 引数で代用し combine_check のみをテスト
 // ----------------------------------------------------------
-// [SKIP Bug#16]
-// fn str_len_is3(s: string) -> i32 {
-//     if (s == "abc") { return 1; }   // Bug#16: MrylString == MrylString
-//     if (s == "foo") { return 1; }
-//     if (s == "bar") { return 1; }
-//     if (s == "cat") { return 1; }
-//     return 0;
-// }
+fn str_len_is3(s: string) -> i32 {
+    if (s == "abc") { return 1; }
+    if (s == "foo") { return 1; }
+    if (s == "bar") { return 1; }
+    if (s == "cat") { return 1; }
+    return 0;
+}
 
 fn combine_check(len3: i32, eq: i32) -> i32 {
     if (len3 == 1 && eq == 1) {
@@ -127,26 +122,18 @@ fn main() -> i32 {
     println("t3={}", t3);                  // t3=foo-bar
 
     // ----------------------------------------------------------
-    // C. string 比較 (== / !=) / C1 [SKIP Bug#16]
+    // C. string 比較 (== / !=) / C1
     // ----------------------------------------------------------
-    println("--- C: String comparison (SKIP Bug#16) ---");
-    // [SKIP Bug#16] string == / != が C で MrylString 直接比較でコンパイルエラー
-    //   Python では正常動作。Bug#16 修正後にコメントを外すこと。
-    //
-    // 期待値 (Python):
-    //   eq(a==a)=1  eq(a==b)=0  neq(a!=b)=1  neq(a!=a)=0
-    //   var_eq=1    var_eq2=0
-    //
-    // println("eq(a==a)={}", str_eq("abc", "abc"));   // 1
-    // println("eq(a==b)={}", str_eq("abc", "xyz"));   // 0
-    // println("neq(a!=b)={}", str_neq("abc", "xyz")); // 1
-    // println("neq(a!=a)={}", str_neq("abc", "abc")); // 0
-    // let s2 = "hello";
-    // let s3 = "hello";
-    // let s4 = "world";
-    // println("var_eq={}", str_eq(s2, s3));    // 1
-    // println("var_eq2={}", str_eq(s2, s4));   // 0
-    println("--- C skipped due to Bug#16 ---");
+    println("--- C: String comparison ---");
+    println("eq(a==a)={}", str_eq("abc", "abc"));   // 1
+    println("eq(a==b)={}", str_eq("abc", "xyz"));   // 0
+    println("neq(a!=b)={}", str_neq("abc", "xyz")); // 1
+    println("neq(a!=a)={}", str_neq("abc", "abc")); // 0
+    let s2 = "hello";
+    let s3 = "hello";
+    let s4 = "world";
+    println("var_eq={}", str_eq(s2, s3));    // 1
+    println("var_eq2={}", str_eq(s2, s4));   // 0
 
     // ----------------------------------------------------------
     // D. string 引数・戻り値 / C0
@@ -157,16 +144,12 @@ fn main() -> i32 {
     println("sign(0)={}", sign_string(0));     // zero
 
     // ----------------------------------------------------------
-    // E. MC/DC: combine_check(len3, eq) (数値引数版)
-    //    (len3 == 1 && eq == 1)
-    // [SKIP Bug#16] str_len_is3(string) は全て string 比較を使うため SKIP
-    //   → 数値引数で combine_check の条件分岐のみ MC/DC 検証
+    // E. MC/DC: str_len_is3 + combine_check / C1 + MC/DC
     // ----------------------------------------------------------
     println("--- E: MC/DC string check ---");
 
-    // [SKIP Bug#16] str_len_is3 は string == を使うためコンパイル不可
-    // println("len3(abc)={}", str_len_is3("abc"));  // 1
-    // println("len3(ab)={}", str_len_is3("ab"));    // 0
+    println("len3(abc)={}", str_len_is3("abc"));  // 1
+    println("len3(ab)={}", str_len_is3("ab"));    // 0
 
     // MC/DC: combine_check (len3==1 && eq==1)
     // {len3=F, *}    → 0 (len3=0 が単独決定)

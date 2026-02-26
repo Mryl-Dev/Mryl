@@ -47,8 +47,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             op         = expr.op
             left_type  = self._infer_expr_type(expr.left)
             right_type = self._infer_expr_type(expr.right)
-            if left_type == "string" and right_type == "string" and op == "+":
-                return f"mryl_string_concat({left}, {right})"
+            if left_type == "string" and right_type == "string":
+                if op == "+":
+                    return f"mryl_string_concat({left}, {right})"
+                if op == "==":
+                    return f"(strcmp(({left}).data, ({right}).data) == 0)"
+                if op == "!=":
+                    return f"(strcmp(({left}).data, ({right}).data) != 0)"
             # && / || を明示的にマップ(他は同一)
             c_op = {"&&": "&&", "||": "||"}.get(op, op)
             return f"({left} {c_op} {right})"
@@ -134,8 +139,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             right      = self._generate_expr_with_temps(expr.right, temp_string_mapping)
             left_type  = self._infer_expr_type(expr.left)
             right_type = self._infer_expr_type(expr.right)
-            if left_type == "string" and right_type == "string" and expr.op == "+":
-                return f"mryl_string_concat({left}, {right})"
+            if left_type == "string" and right_type == "string":
+                if expr.op == "+":
+                    return f"mryl_string_concat({left}, {right})"
+                if expr.op == "==":
+                    return f"(strcmp(({left}).data, ({right}).data) == 0)"
+                if expr.op == "!=":
+                    return f"(strcmp(({left}).data, ({right}).data) != 0)"
             return f"({left} {expr.op} {right})"
 
         return self._generate_expr(expr)
