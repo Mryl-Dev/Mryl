@@ -698,15 +698,37 @@ class Parser:
         )
 
     def parse_update_expr(self):
-        """Parse update expression (can be assignment like i = i + 1)"""
+        """Parse update expression (can be assignment like i = i + 1, or compound like i += 1)"""
         expr = self.parse_expr()
-        
-        # Check for assignment
+
+        line = expr.line if hasattr(expr, 'line') else None
+        col  = expr.column if hasattr(expr, 'column') else None
+
+        # Simple assignment
         if self.current.kind == TokenKind.EQ:
             self.advance()
             value = self.parse_expr()
-            return Assignment(expr, value, expr.line if hasattr(expr, 'line') else None, expr.column if hasattr(expr, 'column') else None)
-        
+            return Assignment(expr, value, line, col)
+
+        # Compound assignment operators (+=, -=, *=, /=, %=, <<=, >>=, ^=)
+        compound_ops = {
+            TokenKind.PLUS_EQ:   "+=",
+            TokenKind.MINUS_EQ:  "-=",
+            TokenKind.STAR_EQ:   "*=",
+            TokenKind.SLASH_EQ:  "/=",
+            TokenKind.MOD_EQ:    "%=",
+            TokenKind.LSHIFT_EQ: "<<=",
+            TokenKind.RSHIFT_EQ: ">>=",
+            TokenKind.CARET_EQ:  "^=",
+        }
+        for token_kind, op_str in compound_ops.items():
+            if self.current.kind == token_kind:
+                self.advance()
+                value    = self.parse_expr()
+                base_op  = op_str[:-1]  # Remove trailing '='
+                bin_expr = BinaryOp(base_op, expr, value, line, col)
+                return Assignment(expr, bin_expr, line, col)
+
         return expr
 
     def parse_return_stmt(self):
