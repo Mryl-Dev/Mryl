@@ -354,8 +354,11 @@ class CodeGenerator(
                 if stmt.__class__.__name__ == "ReturnStmt":
                     has_return = True
 
-        for var_name in self.local_string_vars:
-            self._emit(f"free_mryl_string({var_name});")
+        # has_return=True の場合は _generate_return 内で cleanup 済みのため
+        # ここで再度 free を emit すると return の後ろにデッドコードが並ぶ。
+        if not has_return:
+            for var_name in self.local_string_vars:
+                self._emit(f"free_mryl_string({var_name});")
 
         if not has_return:
             if func.name == "main":

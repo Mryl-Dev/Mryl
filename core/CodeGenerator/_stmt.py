@@ -183,7 +183,15 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     self.local_string_vars.append(stmt.name)
 
     def _generate_return(self, stmt):
-        """return 文を出力する。Ok/Err は Result compound literal に変換する """
+        """return 文を出力する。
+        return を emit する直前に、現在のスコープで追跡している文字列変数を
+        すべて解放する（return の後ろに free が並ぶメモリリークを防ぐ）。
+        Ok/Err は Result compound literal に変換する。
+        """
+        # --- cleanup: return より前に文字列変数を解放 ---
+        for var_name in list(self.local_string_vars):
+            self._emit(f"free_mryl_string({var_name});")
+
         if stmt.expr:
             expr_class = stmt.expr.__class__.__name__
             if expr_class == "FunctionCall" and stmt.expr.name in ("Ok", "Err") \
