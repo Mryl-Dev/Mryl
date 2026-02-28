@@ -197,13 +197,23 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
-        self._emit("MrylString to_string(int32_t n) {")
+        self._emit("static MrylString _mryl_to_string_i32(int32_t n) {")
         self.indent_level += 1
         self._emit("char buf[32];")
         self._emit("snprintf(buf, sizeof(buf), \"%d\", n);")
         self._emit("return make_mryl_string(buf);")
         self.indent_level -= 1
         self._emit("}")
+        self._emit("")
+        self._emit("static MrylString _mryl_to_string_f64(double n) {")
+        self.indent_level += 1
+        self._emit("char buf[32];")
+        self._emit("snprintf(buf, sizeof(buf), \"%g\", n);")
+        self._emit("return make_mryl_string(buf);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
+        self._emit("#define to_string(x) _Generic((x), double: _mryl_to_string_f64, float: _mryl_to_string_f64, default: _mryl_to_string_i32)(x)")
         self._emit("")
 
     def _emit_header(self):

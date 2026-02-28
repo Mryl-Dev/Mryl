@@ -107,13 +107,12 @@ fn main() -> i32 {
     let sneg = to_string(neg);
     println("to_string(-7)={}", sneg);   // -7
 
-    // [Bug#14 SKIP] to_string(f64) → C で整数切り捨て (3.14 → "3")
-    // let fv = 3.14;
-    // let sf = to_string(fv);
-    // println("to_string(3.14)={}", sf);   // 3.14
-    println("to_string(f64): (SKIP Bug#14)");
+    // to_string(f64)
+    let fv = 3.14;
+    let sf = to_string(fv);
+    println("to_string(3.14)={}", sf);   // 3.14
 
-    // [Bug#11 SKIP] to_string(bool)  Python=True/C=1
+    // [Bug#11 SKIP] to_string(bool)  まだ不一致 (Python=True/false, C=1)
     // let flag = true;
     // let sb = to_string(flag);
     // println("to_string(true)={}", sb);
