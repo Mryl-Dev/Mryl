@@ -308,6 +308,16 @@ class CodeGenerator(
     # ------------------------------------------------------------------
     def _generate_function(self, func):
         """関数宣言から C コードを生成する。"""
+        # 前方宣言 (body=None) → C プロトタイプのみ出力
+        if func.body is None:
+            ret_t  = self._type_to_c(func.return_type) if func.return_type else "void"
+            params = ", ".join(
+                f"{self._type_to_c(p.type_node)} {p.name}" for p in func.params
+            ) or "void"
+            self._emit(f"{ret_t} {func.name}({params});")
+            self._emit("")
+            return
+
         self.env.append({})
         self.local_string_vars   = []
         self.temp_string_counter = 0

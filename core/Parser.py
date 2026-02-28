@@ -229,6 +229,18 @@ class Parser:
         if self.match(TokenKind.ARROW):
             return_type = self.parse_type()
 
+        # 前方宣言: fn name(...) -> T;  (ボディなし)
+        if self.match(TokenKind.SEMICOLON):
+            return FunctionDecl(
+                name=name,
+                params=params,
+                return_type=return_type,
+                body=None,
+                type_params=type_params,
+                line=line,
+                column=col,
+            )
+
         body = self.parse_block()
         return FunctionDecl(
             name=name, 

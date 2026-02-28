@@ -69,27 +69,17 @@ fn deep_nest(x: i32) -> i32 {
     return sum_of_two_squares(x, x + 1);
 }
 
-// [SKIP Bug#15] 前方宣言 `fn name(...) -> T;` がパーサー未対応のため相互再帰不可
-//   前方宣言なしでは fn A が fn B を呼ぶ構造にできない
-//   → 代わりに bit-trick による偶奇判定 (純粋な単方向再帰) でテスト
+// #37 修正済み: 前方宣言を使った相互再帰
+fn is_odd(n: i32) -> i32;   // 前方宣言
+
 fn is_even(n: i32) -> i32 {
-    if (n <= 0) {
-        return 1;           // 0: even
-    }
-    if (n == 1) {
-        return 0;           // 1: odd
-    }
-    return is_even(n - 2);  // n-2 ずつ減らす (単方向再帰)
+    if (n == 0) { return 1; }
+    return is_odd(n - 1);
 }
 
-fn is_odd_check(n: i32) -> i32 {
-    if (n <= 0) {
-        return 0;
-    }
-    if (n == 1) {
-        return 1;
-    }
-    return is_odd_check(n - 2);
+fn is_odd(n: i32) -> i32 {
+    if (n == 0) { return 0; }
+    return is_even(n - 1);
 }
 
 // MC/DC: is_valid(n) の (n > 0 && n <= 100)
@@ -192,14 +182,14 @@ fn main() -> i32 {
     // deep_nest(3): sum_of_two_squares(3,4) = 9 + 16 = 25
     println("deep(3)={}", deep_nest(3));    // 25
 
-    // 深い再帰 (偶奇判定 - 単方向再帰)
+    // 相互再帰 (前方宣言経由)
     println("even(0)={}", is_even(0));      // 1
     println("even(1)={}", is_even(1));      // 0
     println("even(4)={}", is_even(4));      // 1
     println("even(5)={}", is_even(5));      // 0
-    println("odd(1)={}", is_odd_check(1));  // 1
-    println("odd(3)={}", is_odd_check(3));  // 1
-    println("odd(4)={}", is_odd_check(4));  // 0
+    println("odd(1)={}", is_odd(1));        // 1
+    println("odd(3)={}", is_odd(3));        // 1
+    println("odd(4)={}", is_odd(4));        // 0
 
     // MC/DC: is_valid (n>0 && n<=100)
     // {n>0=F, *}        → 0  (n=0)
