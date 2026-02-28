@@ -174,6 +174,15 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     for field in struct.fields:
                         if field.name == expr.field:
                             return field.type_node.name
+            # ジェネリック具体化名 (例: "Box_string") からの型推論 (#31)
+            for struct in self.structs:
+                if getattr(struct, 'type_params', None) and obj_type.startswith(struct.name + '_'):
+                    suffix = obj_type[len(struct.name)+1:]
+                    targs = suffix.split('_')
+                    subst = dict(zip(struct.type_params, targs))
+                    for field in struct.fields:
+                        if field.name == expr.field:
+                            return subst.get(field.type_node.name, field.type_node.name)
             return "i32"
 
         return "i32"

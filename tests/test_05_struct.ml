@@ -21,10 +21,9 @@
 //           Person (name: string) 関連をスキップ
 //   Bug#8: struct の f64 フィールド / f64 返却が C native で printf %d になる
 //           Circle.area() (f64) 関連をスキップ
-//   Bug#9: ジェネリック struct の string/f64 フィールドが C native で正しく出力されない
-//           Box<string> / Box<f64> をスキップ
 //   Bug#10: impl Struct<T> 構文がパーサー未対応
 //           impl Box<T> セクション全体をスキップ
+//   Bug#9: FIXED (#31) ジェネリック struct の string/f64 フィールドが正しく出力されるよう修正済み
 // ============================================================
 
 // ----------------------------------------------------------
@@ -210,15 +209,13 @@ fn main() -> i32 {
     let bi = Box<i32> { value: 42 };
     println("Box<i32>={}", bi.value);       // 42
 
-    // [SKIP Bug#9] Box<string>: string フィールドが C native で %d になる
-    // let bs = Box<string> { value: "hello" };
-    // println("Box<string>={}", bs.value);  // hello
-    println("Box<string>=(SKIP Bug#9)");
+    // Bug#9 FIXED (#31): env が "Box_string" で登録されフィールド型推論が正しく動作
+    let bs = Box<string> { value: "hello" };
+    println("Box<string>={}", bs.value);  // hello
 
-    // [SKIP Bug#9] Box<f64>: f64 フィールドが C native で %d になる
-    // let bf = Box<f64> { value: 3.14 };
-    // println("Box<f64>={}", bf.value);     // 3.14
-    println("Box<f64>=(SKIP Bug#9)");
+    // Bug#9 FIXED (#31): Box<f64> も同様に修正済み
+    let bf = Box<f64> { value: 3.14 };
+    println("Box<f64>={}", bf.value);     // 3.14
 
     // ----------------------------------------------------------
     // D. ジェネリック struct メソッド (SKIP Bug#10)

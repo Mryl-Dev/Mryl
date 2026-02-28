@@ -173,7 +173,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     var_type = c if c not in ("any", "") else "int32_t"
             self._emit(f"{var_type} {stmt.name} = {init_expr};")
             if type_node:
-                self.env[-1][stmt.name] = type_node.name
+                # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
+                mryl_name = type_node.name
+                if getattr(type_node, 'type_args', None):
+                    suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
+                    mryl_name = f"{type_node.name}_{suffix}"
+                self.env[-1][stmt.name] = mryl_name
                 if type_node.name == "string":
                     self.local_string_vars.append(stmt.name)
             else:
