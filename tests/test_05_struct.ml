@@ -186,21 +186,23 @@ fn main() -> i32 {
     let pd = Point { x: 0, y: 0 };
     println("classify(0,0)={}", pd.classify());  // 0
 
-    // [SKIP Bug#7] Person: string フィールドが C native で %d になる
-    // println("--- B: Person ---");
-    // let alice = Person { name: "Alice", age: 30 };
-    // alice.greet();      // I am Alice, 30 years old.
+    // B: Person (string フィールド)
+    println("--- B: Person ---");
+    let alice = Person { name: "Alice", age: 30 };
+    alice.greet();      // I am Alice, 30 years old.
+    // [SKIP Bug#6] birthday() は self.age を書き換えるが C では値渡しのため
+    //   呼び出し元の alice.age が変わらず、greet() の出力が Python と不一致になる
     // alice.birthday();
-    // alice.greet();      // I am Alice, 31 years old.
-    println("--- B: Person (SKIP Bug#7) ---");
+    // alice.greet();   // Python: 31 years old. / C: 30 years old.
 
-    // [SKIP Bug#8] Circle: f64 フィールド / f64 戻り値が C native で %d になる
-    // println("--- B: Circle ---");
-    // let ci = Circle { radius: 5.0 };
-    // println("area={}", ci.area());    // 78.53975
-    // let ci2 = Circle { radius: 1.0 };
-    // println("area={}", ci2.area());   // 3.14159
-    println("--- B: Circle (SKIP Bug#8) ---");
+
+    // B: Circle (f64 フィールド・戻り値)
+    println("--- B: Circle ---");
+    let ci = Circle { radius: 5.0 };
+    println("area={}", ci.area());    // 78.5397
+    let ci2 = Circle { radius: 1.0 };
+    println("area={}", ci2.area());   // 3.14159
+
 
     // ----------------------------------------------------------
     // C. ジェネリック構造体 (C0)

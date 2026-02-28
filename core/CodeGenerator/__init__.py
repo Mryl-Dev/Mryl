@@ -388,6 +388,8 @@ class CodeGenerator(
             param_strs   = [f"{self_type} self"]
             param_strs.extend(f"{self._type_to_c(p.type_node)} {p.name}" for p in other_params)
         else:
+            self_type    = None
+            other_params = method.params
             param_strs = [f"{self._type_to_c(p.type_node)} {p.name}" for p in method.params]
 
         params_str = ", ".join(param_strs)
@@ -395,8 +397,36 @@ class CodeGenerator(
         self._emit(f"{return_type} {func_name}({params_str}) {{")
         self.indent_level += 1
 
+        # _generate_return 内の cleanup が参照するためメソッド開始時に初期化する
+        saved_str_vars           = getattr(self, 'local_string_vars', [])
+        saved_temp_ctr           = getattr(self, 'temp_string_counter', 0)
+        self.local_string_vars   = []
+        self.temp_string_counter = 0
+
+        # env に self と引数を登録（_infer_expr_type が struct フィールド型を解決できるようにする）
+        method_env: dict = {}
+        if self_type:
+            method_env["self"] = self_type
+        for p in other_params:
+            method_env[p.name] = p.type_node.name
+        self.env.append(method_env)
+
+        has_return = False
         for stmt in method.body.statements:
             self._generate_statement(stmt)
+            if stmt.__class__.__name__ == "ReturnStmt":
+                has_return = True
+
+        self.env.pop()
+
+        # has_return=False の場合のみここで cleanup（True の場合は _generate_return 内で処理済み）
+        if not has_return:
+            for var_name in self.local_string_vars:
+                self._emit(f"free_mryl_string({var_name});")
+
+        # 復元
+        self.local_string_vars   = saved_str_vars
+        self.temp_string_counter = saved_temp_ctr
 
         self.indent_level -= 1
         self._emit("}")

@@ -161,6 +161,15 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                 return t
             return "i32"
 
+        if expr_class == "StructAccess":
+            obj_type = self._infer_expr_type(expr.obj)
+            for struct in self.structs:
+                if struct.name == obj_type:
+                    for field in struct.fields:
+                        if field.name == expr.field:
+                            return field.type_node.name
+            return "i32"
+
         return "i32"
 
     def _scan_generic_calls(self, block):
