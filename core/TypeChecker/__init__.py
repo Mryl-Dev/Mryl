@@ -153,6 +153,9 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
     # メソッド
     # ============================================
     def check_method(self, struct: StructDecl, method: MethodDecl):
+        # 前方宣言 (body=None) はスキップ
+        if method.body is None:
+            return
         self.env = [{}]
         method.params[0].type_node = TypeNode(struct.name)  # self パラメータの型を解決
         for p in method.params:
@@ -165,6 +168,9 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
     def check_function(self, func: FunctionDecl):
         # ジェネリック関数は呼び出し時に実体化するためスキップ
         if func.type_params:
+            return
+        # 前方宣言 (body=None) はスキップ
+        if func.body is None:
             return
 
         self.env = [{}]

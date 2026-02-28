@@ -137,6 +137,12 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     return "bool"
                 if expr.method in ("try", "unwrap", "unwrap_err", "unwrap_or", "err"):
                     return "i32"
+            # struct メソッドの戻り値型を検索 (#29/#30 正確な型推論)
+            for struct in self.structs:
+                if struct.name == obj_t:
+                    for method in struct.methods:
+                        if method.name == expr.method and method.return_type:
+                            return method.return_type.name
             return "i32"
 
         if expr_class == "MatchExpr":
