@@ -69,15 +69,15 @@ fn main() -> i32 {
     println("i16={}", d);    // 32767
     println("i64={}", e);    // 9999999999
 
-    // [Bug#11 SKIP] bool 宣言
-    // let bv: bool = true;
-    // println("bool={}", bv);
+    // bool 宣言
+    let bv: bool = true;
+    println("bool={}", bv);   // true
 
-    // [Bug#13 SKIP] f64 宣言
-    // let fv: f64 = 3.14;
-    // println("f64={}", fv);
+    // f64 宣言
+    let fv: f64 = 3.14;
+    println("f64={}", fv);    // 3.14
 
-    println("--- A: bool/f64 decl (SKIP Bug#11/13) ---");
+    println("--- A: bool/f64 decl ---");
 
     // ----------------------------------------------------------
     // B. 型推論 / C0
@@ -90,13 +90,13 @@ fn main() -> i32 {
     println("str={}", xs);       // world
     println("arr[1]={}", xa[1]); // 2
 
-    // [Bug#11 SKIP] bool 推論
-    // let xb = false;
-    // println("bool={}", xb);
+    // bool 型推論
+    let xb = false;
+    println("bool={}", xb);   // false
 
-    // [Bug#13 SKIP] f64 推論
-    // let xf = 2.718;
-    // println("f64={}", xf);
+    // f64 型推論
+    let xf = 2.718;
+    println("f64={}", xf);    // 2.718
 
     // ----------------------------------------------------------
     // C. 関数戻り値型 / C1: typed_flag の true/false
@@ -161,12 +161,11 @@ fn main() -> i32 {
     let p3 = i16v + i64v;
     println("i16+i64={}", p3);   // 1050
 
-    // [Bug#13 SKIP] f32+f64 型昇格 の出力が不一致
-    // let f32v: f32 = 1.5(f32);
-    // let f64v: f64 = 2.5;
-    // let p2 = f32v + f64v;
-    // println("f32+f64={}", p2);
-    println("f32+f64: (SKIP Bug#13)");
+    // f32+f64 型昇格
+    let f32v: f32 = 1.5(f32);
+    let f64v: f64 = 2.5;
+    let p2 = f32v + f64v;
+    println("f32+f64={}", p2);   // 4
 
     // MC/DC: in_range(x, 0, 10) 内 (x >= 0 && x <= 10)
     println("--- E: MC/DC in_range ---");
