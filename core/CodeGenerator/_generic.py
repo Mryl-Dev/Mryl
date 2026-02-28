@@ -143,6 +143,16 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     for method in struct.methods:
                         if method.name == expr.method and method.return_type:
                             return method.return_type.name
+            # ジェネリック具体化名 "Box_string" からのメソッド戻り値型推論 (#32)
+            for struct in self.structs:
+                if getattr(struct, 'type_params', None) and obj_t.startswith(struct.name + '_'):
+                    suffix = obj_t[len(struct.name) + 1:]
+                    targs  = suffix.split('_')
+                    subst  = dict(zip(struct.type_params, targs))
+                    for method in struct.methods:
+                        if method.name == expr.method and method.return_type:
+                            rt = method.return_type.name
+                            return subst.get(rt, rt)
             return "i32"
 
         if expr_class == "MatchExpr":

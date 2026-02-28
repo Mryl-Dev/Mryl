@@ -166,7 +166,21 @@ class CodeGenerator(
 
         # 構造体メソッドの出力
         for struct in program.structs:
-            if struct.methods:
+            if not struct.methods:
+                continue
+            if getattr(struct, 'type_params', None):
+                # ジェネリック struct: 各具体化型に対してモノモーフィズされたメソッドを生成 (#32)
+                for (sname, targs), _ in generic_uses.items():
+                    if sname != struct.name:
+                        continue
+                    mono_name  = f"{sname}_{'_'.join(targs)}"
+                    type_subst = dict(zip(struct.type_params, targs))
+                    self._emit("")
+                    self._emit(f"// Methods for {mono_name}")
+                    for method in struct.methods:
+                        self._generate_method(mono_name, method, type_subst)
+            else:
+                # 通常 struct: そのままメソッドを生成
                 self._emit("")
                 self._emit(f"// Methods for {struct.name}")
                 for method in struct.methods:
@@ -387,22 +401,42 @@ class CodeGenerator(
         self.env.pop()
         self.ident_renames = saved_renames
 
-    def _generate_method(self, struct_name: str, method):
-        """構造体メソッドから C コードを生成する。"""
+    def _generate_method(self, struct_name: str, method, type_subst: dict = None):
+        """構造体メソッドから C コードを生成する。
+        type_subst: ジェネリック型置換辞書 (例: {"T": "string"})
+        """
         func_name   = f"{struct_name}_{method.name}"
-        return_type = self._type_to_c(method.return_type)
+
+        # 型パラメータを置換するヘルパー
+        def resolve_type(type_node):
+            if type_subst and type_node.name in type_subst:
+                from Ast import TypeNode as TN
+                return TN(type_subst[type_node.name])
+            return type_node
+
+        return_type = self._type_to_c(resolve_type(method.return_type))
 
         if method.params and method.params[0].name == "self":
             self_type    = struct_name
             other_params = method.params[1:]
             param_strs   = [f"{self_type}* self"]   # Bug#28: ポインタ渡し
-            param_strs.extend(f"{self._type_to_c(p.type_node)} {p.name}" for p in other_params)
+            param_strs.extend(
+                f"{self._type_to_c(resolve_type(p.type_node))} {p.name}"
+                for p in other_params
+            )
         else:
             self_type    = None
             other_params = method.params
-            param_strs = [f"{self._type_to_c(p.type_node)} {p.name}" for p in method.params]
+            param_strs = [
+                f"{self._type_to_c(resolve_type(p.type_node))} {p.name}"
+                for p in method.params
+            ]
 
         params_str = ", ".join(param_strs)
+
+        # ボディなし（前方宣言）はスキップ
+        if method.body is None:
+            return
 
         self._emit(f"{return_type} {func_name}({params_str}) {{")
         self.indent_level += 1
@@ -418,7 +452,12 @@ class CodeGenerator(
         if self_type:
             method_env["self"] = self_type
         for p in other_params:
-            method_env[p.name] = p.type_node.name
+            # ジェネリック型置換があれば解決済み型を登録 (#32)
+            resolved_tname = (
+                type_subst.get(p.type_node.name, p.type_node.name)
+                if type_subst else p.type_node.name
+            )
+            method_env[p.name] = resolved_tname
         self.env.append(method_env)
 
         has_return = False

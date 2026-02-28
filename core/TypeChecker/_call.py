@@ -132,7 +132,8 @@ class TypeCheckerCallMixin:
         # ジェネリクス置換マップ（構造体の型引数）
         subst = {}
         for param, arg in zip(struct.type_params, obj_type.type_args):
-            subst[param] = arg
+            # type_args が str の場合は TypeNode に変換しておく (#32)
+            subst[param] = TypeNode(arg) if isinstance(arg, str) else arg
 
         # 各引数の型をメソッドのパラメータと照合（self を除外）
         for i, (arg_t, param) in enumerate(zip(arg_types, method.params[1:])):

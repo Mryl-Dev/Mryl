@@ -145,11 +145,22 @@ class Parser:
         return EnumDecl(name, variants, line, col)
 
     def parse_impl_decl(self, structs):
-        """Parse impl StructName { fn method(...) { ... } }"""
+        """Parse impl StructName { fn method(...) { ... } }
+        Also handles generic syntax: impl Box<T> { ... }
+        """
         self.expect(TokenKind.IMPL)
 
         struct_name = self.current.value
         self.expect(TokenKind.IDENT)
+
+        # ジェネリック型引数 <T, U, ...> をスキップ (impl Box<T> など) (#32)
+        if self.current.kind == TokenKind.LT:
+            self.advance()  # consume <
+            while self.current.kind != TokenKind.GT:
+                self.expect(TokenKind.IDENT)  # type param name
+                if self.current.kind == TokenKind.COMMA:
+                    self.advance()
+            self.expect(TokenKind.GT)  # consume >
 
         if struct_name not in structs:
             raise SyntaxError_(f"Struct {struct_name} not found", self.current)

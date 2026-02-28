@@ -21,9 +21,8 @@
 //           Person (name: string) 関連をスキップ
 //   Bug#8: struct の f64 フィールド / f64 返却が C native で printf %d になる
 //           Circle.area() (f64) 関連をスキップ
-//   Bug#10: impl Struct<T> 構文がパーサー未対応
-//           impl Box<T> セクション全体をスキップ
 //   Bug#9: FIXED (#31) ジェネリック struct の string/f64 フィールドが正しく出力されるよう修正済み
+//   Bug#10: FIXED (#32) impl Struct<T> 構文のパーサー対応・CodeGenerator モノモーフィズ対応済み
 // ============================================================
 
 // ----------------------------------------------------------
@@ -104,19 +103,18 @@ struct Box<T> {
 
 // ----------------------------------------------------------
 // D. ジェネリック struct メソッド
-// [Bug#10] impl Box<T>: パーサーが impl Struct<T> の型引数 <T> に未対応
-//          parse_impl_decl が IDENT の直後に LBRACE を期待しており LT で SyntaxError
-//          Issue: ジェネリック impl (impl StructName<T>) のパーサーサポートを追加する
+// Bug#10 FIXED (#32): impl Box<T> のパーサー対応済み
+//                     CodeGenerator がモノモーフィズされたメソッドを生成
 // ----------------------------------------------------------
-// impl Box<T> {
-//     fn get(self) -> T {
-//         return self.value;
-//     }
-//
-//     fn set(self, v: T) -> void {
-//         self.value = v;
-//     }
-// }
+impl Box<T> {
+    fn get(self) -> T {
+        return self.value;
+    }
+
+    fn set(self, v: T) -> void {
+        self.value = v;
+    }
+}
 
 // ----------------------------------------------------------
 // E. 複数フィールド+メソッド
@@ -218,9 +216,19 @@ fn main() -> i32 {
     println("Box<f64>={}", bf.value);     // 3.14
 
     // ----------------------------------------------------------
-    // D. ジェネリック struct メソッド (SKIP Bug#10)
+    // D. ジェネリック struct メソッド (Bug#10 FIXED)
     // ----------------------------------------------------------
-    println("--- D: Generic Methods (SKIP Bug#10) ---");
+    println("--- D: Generic Methods ---");
+    let bi2 = Box<i32> { value: 10 };
+    println("get={}", bi2.get());   // 10
+    bi2.set(99);
+    println("get={}", bi2.get());   // 99
+
+    let bs2 = Box<string> { value: "world" };
+    println("get={}", bs2.get());   // world
+
+    let bf2 = Box<f64> { value: 1.5 };
+    println("get={}", bf2.get());   // 1.5
 
     // ----------------------------------------------------------
     // E. 複数フィールド + メソッド (C0)
