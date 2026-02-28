@@ -14,9 +14,9 @@
 //
 // 既知バグ (C Native):
 //   Bug#5: 異なる struct が同名メソッドを持つ場合 CodeGenerator が誤った関数名を使用
-//           Rect.size()/border() で回避
+//           → Bug#5 FIXED (#27 obj型から正しい struct 名を解決): 現テストは引き続き異なるメソッド名を使用
 //   Bug#6: struct メソッド内 self.field 代入が C では値渡しのため反映されない
-//           move_by()/birthday() のミューテーション検証はスキップ
+//           → Bug#6 FIXED (#28 pointer渡し対応): move_by()/birthday() のミューテーション有効
 //   Bug#7: struct の string フィールドが C native で printf %d になる
 //           Person (name: string) 関連をスキップ
 //   Bug#8: struct の f64 フィールド / f64 返却が C native で printf %d になる
@@ -166,9 +166,9 @@ fn main() -> i32 {
     q.display();                // Point(3,4)
     println("sum={}", q.sum()); // 7
 
-    // [SKIP Bug#6] move_by によるミューテーション: C では値渡しのため反映されない
-    // q.move_by(2, -1);
-    // q.display();  // expect Point(5,3) but C native returns Point(3,4)
+    // Bug#6 FIXED (#28 pointer渡し対応済み): move_by でミューテーションが反映される
+    q.move_by(2, -1);
+    q.display();  // Point(5,3)
 
     // MC/DC: x>0=T, y>0=T  1
     let pa = Point { x: 1, y: 1 };
@@ -190,10 +190,9 @@ fn main() -> i32 {
     println("--- B: Person ---");
     let alice = Person { name: "Alice", age: 30 };
     alice.greet();      // I am Alice, 30 years old.
-    // [SKIP Bug#6] birthday() は self.age を書き換えるが C では値渡しのため
-    //   呼び出し元の alice.age が変わらず、greet() の出力が Python と不一致になる
-    // alice.birthday();
-    // alice.greet();   // Python: 31 years old. / C: 30 years old.
+    // Bug#6 FIXED (#28 pointer渡し対応済み): birthday() でミューテーションが反映される
+    alice.birthday();
+    alice.greet();   // I am Alice, 31 years old.
 
 
     // B: Circle (f64 フィールド・戻り値)

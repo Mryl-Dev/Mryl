@@ -395,7 +395,7 @@ class CodeGenerator(
         if method.params and method.params[0].name == "self":
             self_type    = struct_name
             other_params = method.params[1:]
-            param_strs   = [f"{self_type} self"]
+            param_strs   = [f"{self_type}* self"]   # Bug#28: ポインタ渡し
             param_strs.extend(f"{self._type_to_c(p.type_node)} {p.name}" for p in other_params)
         else:
             self_type    = None

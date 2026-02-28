@@ -76,7 +76,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         if expr_class == "StructAccess":
             obj = self._generate_expr(expr.obj)
-            return f"{obj}.{expr.field}"
+            # self はポインタ渡しなので -> を使用 (Bug#28)
+            op = "->" if (expr.obj.__class__.__name__ == "VarRef" and expr.obj.name == "self") else "."
+            return f"{obj}{op}{expr.field}"
 
         if expr_class == "ArrayAccess":
             arr      = self._generate_expr(expr.array)
@@ -506,6 +508,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         obj         = self._generate_expr(expr.obj)
         args_list   = [self._generate_expr(arg) for arg in expr.args]
-        struct_name = self._infer_struct_name(expr.method)
-        all_args    = [obj] + args_list
+        struct_name = obj_type   # Bug#27: obj の型から struct 名を解決
+        all_args    = [f"&({obj})"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
+
