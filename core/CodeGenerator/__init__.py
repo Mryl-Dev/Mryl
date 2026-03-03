@@ -202,17 +202,17 @@ class CodeGenerator(
                 self._emit(f"{ret_t} {inst_func.name}({params});")
             self._emit("")
 
-        # Phase 3: 非ジェネリック関数の定義
-        for func in program.functions:
-            if not func.type_params:
-                self._generate_function(func)
-
-        # Phase 4: 単相化ジェネリック関数の定義
+        # Phase 3: 単相化ジェネリック関数の定義 (main より前に出力)
         if self.generic_instantiations:
             self._emit("// ===== Monomorphized Generic Functions =====")
             for (func_name, type_args_tuple), inst_func in self.generic_instantiations.items():
                 self._emit(f"// Generic instantiation: {func_name}{type_args_tuple}")
                 self._generate_function(inst_func)
+
+        # Phase 4: 非ジェネリック関数の定義 (main を含む)
+        for func in program.functions:
+            if not func.type_params:
+                self._generate_function(func)
 
         # Phase 5: pending lambda の挿入
         if self.pending_lambdas or self.pending_async_lambda_blocks:

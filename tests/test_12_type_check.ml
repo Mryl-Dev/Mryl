@@ -3,7 +3,7 @@
 //   A. 型付き宣言 (i8〜i64, f32/f64, string, bool)
 //   B. 型推論 (let 推論)
 //   C. 関数戻り値型 (i32/string/bool) - C1
-//   D. ジェネリック型推論 [Bug#4/11 で一部 SKIP]
+//   D. ジェネリック型推論 [Bug#11 (bool) のみ SKIP 残存]
 //   E. 型昇格 (i8+i32, f32+f64, i16+i64) + MC/DC
 //
 // カバレッジ観点:
@@ -129,17 +129,15 @@ fn main() -> i32 {
     let ga: i32 = add_generic(3, 4);
     println("add<i32>={}", ga);   // 7
 
-    // [Bug#4 SKIP] identity(f64)/identity(string): printf が %d になる
-    // let gf: f64 = identity(1.5);
-    // println("id<f64>={}", gf);
-    // let gs: string = identity("type");
-    // println("id<string>={}", gs);
-    println("id<f64/string>: (SKIP Bug#4)");
+    // [Bug#4 修正済み] identity(f64)/identity(string): #26 修正で printf が %g/%s になった
+    let gf: f64 = identity(1.5);
+    println("id<f64>={}", gf);
+    let gs: string = identity("type");
+    println("id<string>={}", gs);
 
-    // [Bug#4 SKIP] add_generic(f64)
-    // let gaf: f64 = add_generic(1.5, 2.5);
-    // println("add<f64>={}", gaf);
-    println("add<f64>: (SKIP Bug#4)");
+    // [Bug#4 修正済み] add_generic(f64): #26 修正で動作
+    let gaf: f64 = add_generic(1.5, 2.5);
+    println("add<f64>={}", gaf);
 
     // [Bug#11 SKIP] identity(bool)
     // let gb: bool = identity(true);

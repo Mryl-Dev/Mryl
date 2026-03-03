@@ -123,10 +123,22 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
         if expr_class == "FunctionCall":
             if expr.name in ("Ok", "Err"):
                 return "Result"
+            # 組み込みマクロ/関数の戻り値型を直接解決 (#25 to_string 対応)
+            _builtin_return_types = {
+                "to_string": "string",
+            }
+            if expr.name in _builtin_return_types:
+                return _builtin_return_types[expr.name]
             fn = self.program_functions.get(expr.name)
             if fn and fn.return_type:
                 if fn.return_type.name == "Result":
                     return "Result"
+                # ジェネリック関数: 型引数を推論して戻り値型を解決 (#26)
+                if fn.type_params and fn.return_type.name in fn.type_params:
+                    type_args = self._infer_generic_type_args(fn, expr.args)
+                    subst = dict(zip(fn.type_params, type_args))
+                    resolved = subst.get(fn.return_type.name, fn.return_type.name)
+                    return resolved
                 return fn.return_type.name
             return "i32"
 

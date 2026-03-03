@@ -15,12 +15,6 @@
 //   備考:
 //     A,D,E は分岐なし  C0 相当のみ
 //     D ジェネリック: 同一関数を型違いで呼び出すことで単相化パス確認
-//
-// [SKIP] pair_str<T,U> の呼び出し (2項目) は現在 C コンパイルエラー。
-//   原因1: to_string() が MrylString 型を受け取れない (#Issue: to_string 引数型制限)
-//   原因2: ジェネリック関数内の string + string が MrylString_concat に変換されない
-//          (#Issue: ジェネリック内 string 加算)
-//    当該 issue 修正後にコメントを外してテストを有効化すること
 // ============================================================
 
 // ----------------------------------------------------------
@@ -71,13 +65,9 @@ fn generic_add<T>(a: T, b: T) -> T {
     return a + b;
 }
 
-// [SKIP] pair_str: ジェネリック内 string 連結バグが修正されたら有効化する
-// Issue: to_string が MrylString 型を受け取れない
-// Issue: ジェネリック関数内 string + string が MrylString_concat に変換されない
-//
-// fn pair_str<T, U>(a: T, b: U) -> string {
-//     return to_string(a) + to_string(b);
-// }
+fn pair_str<T, U>(a: T, b: U) -> string {
+    return to_string(a) + to_string(b);
+}
 
 // ----------------------------------------------------------
 // E. void 関数
@@ -171,24 +161,15 @@ fn main() -> i32 {
     println("--- D: Generic ---");
     println("id_i32={}", identity(42));            // 42
 
-    // [SKIP] identity(f64)/identity(string): C ネイティブで戻り値型が i32 扱いされ
-    //   printf フォーマット指定子が %d になるバグ
-    //   Issue: ジェネリック関数の戻り値型 f64/string で printf が %d になる
-    //   Python 結果: id_f64=3.14, id_str=mryl (Python は正常)
-    // println("id_f64={}", identity(3.14));       // 3.140000
-    // println("id_str={}", identity("mryl"));     // mryl
+    println("id_f64={}", identity(3.14));       // 3.14
+    println("id_str={}", identity("mryl"));     // mryl
 
     println("gadd_i32={}", generic_add(3, 4));     // 7
 
-    // [SKIP] generic_add(f64): 同上バグにより C ネイティブで 0 になる
-    //   Python 結果: gadd_f64=4.0 (Python は正常)
-    // println("gadd_f64={}", generic_add(1.5, 2.5)); // 4.000000
+    println("gadd_f64={}", generic_add(1.5, 2.5)); // 4
 
-    // [SKIP] pair_str: ジェネリック内 string 連結バグ修正後に有効化
-    //   Issue: to_string が MrylString を受け取れない
-    //   Issue: ジェネリック内 string + string が MrylString_concat に変換されない
-    // println("pair={}", pair_str(10, "px"));     // 10px
-    // println("pair={}", pair_str(3.14, 2));      // 3.1400002
+    println("pair={}", pair_str(10, "px"));     // 10px
+    println("pair={}", pair_str(3.14, 2));      // 3.142
 
     // ----------------------------------------------------------
     // E. void 関数 (C0)

@@ -192,10 +192,21 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         return を emit する直前に、現在のスコープで追跡している文字列変数を
         すべて解放する（return の後ろに free が並ぶメモリリークを防ぐ）。
         Ok/Err は Result compound literal に変換する。
+        string VarRef を返す場合は make_mryl_string でディープコピーして返す
+        （パラメータ alias による double free を防止）。
         """
+        # string VarRef を返す場合: ディープコピーで返し local_string_vars から除外
+        return_var_to_deep_copy = None
+        if stmt.expr and stmt.expr.__class__.__name__ == "VarRef":
+            inferred = self._infer_expr_type(stmt.expr)
+            if inferred == "string":
+                return_var_to_deep_copy = stmt.expr.name
+
         # --- cleanup: return より前に文字列変数を解放 ---
+        # 返値となる変数は use-after-free を防ぐためここでは解放しない
         for var_name in list(self.local_string_vars):
-            self._emit(f"free_mryl_string({var_name});")
+            if var_name != return_var_to_deep_copy:
+                self._emit(f"free_mryl_string({var_name});")
 
         if stmt.expr:
             expr_class = stmt.expr.__class__.__name__
@@ -217,7 +228,20 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     self._emit(f"return ({struct_name}){{0, {{.err_val = {val_code}}}}};")
                 return
             expr_code = self._generate_expr(stmt.expr)
-            self._emit(f"return {expr_code};")
+            # string VarRef をそのまま返すと呼び元でディープコピーが共有されて
+            # double free が起きるため make_mryl_string でコピーして返す
+            if return_var_to_deep_copy:
+                # 返値変数は cleanup を skip しているので、コピーを返した後に解放
+                if return_var_to_deep_copy in self.local_string_vars:
+                    tmp = f"__ret_str_{return_var_to_deep_copy}"
+                    self._emit(f"MrylString {tmp} = make_mryl_string({expr_code}.data);")
+                    self._emit(f"free_mryl_string({expr_code});")
+                    self._emit(f"return {tmp};")
+                else:
+                    # パラメータの場合: 呼び元が引数の所有権を持つのでコピーだけ返す
+                    self._emit(f"return make_mryl_string({expr_code}.data);")
+            else:
+                self._emit(f"return {expr_code};")
         else:
             self._emit("return;")
 
