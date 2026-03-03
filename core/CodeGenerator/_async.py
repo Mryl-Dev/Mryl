@@ -121,8 +121,9 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
                     cur = resume
                 elif cls == 'ForStmt' and stmt.is_c_style and \
                         self._stmts_have_await(stmt.body.statements):
-                    # for-loop の変数を初期化リストへ
-                    for_inits.append((stmt.variable, stmt.iterable))
+                    # ループ変数を cur state の LI アイテムとして追加
+                    # (外側ループが再実行されるたびに再初期化される)
+                    cur['items'].append(('LI', stmt.variable, stmt.iterable))
                     head       = new_s()   # loop head  (condition check)
                     end        = new_s()   # after loop
                     cur['term'] = ('G', head['id'])
@@ -165,6 +166,13 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
             kind = item[0]
             if kind == 'S':
                 self._generate_sm_stmt(item[1], func, has_return_val)
+
+            elif kind == 'LI':
+                # ループ変数の初期化 (毎イテレーション実行)
+                var_name  = item[1]
+                init_expr = item[2]
+                init_code = self._generate_expr(init_expr)
+                self._emit(f"__sm->{var_name} = {init_code};")
 
             elif kind == 'LC':
                 # ループ条件チェック: 偽なら end_id へジャンプ
@@ -402,6 +410,29 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
             self._emit("__task_release(__task);")
             self._emit("if (__task->awaiter) __scheduler_post(__task->awaiter);")
             self._emit("return;")
+        elif cls == 'IfStmt':
+            # SM 内 if 文: 分岐内の return も SM 対応の void return に変換するため再帰
+            cond_code = self._strip_outer_parens(self._generate_expr(stmt.condition))
+            self._emit(f"if ({cond_code}) {{")
+            self.indent_level += 1
+            for s in (stmt.then_block.statements if stmt.then_block else []):
+                self._generate_sm_stmt(s, func, has_return_val)
+            self.indent_level -= 1
+            if stmt.else_block:
+                eb_cls = stmt.else_block.__class__.__name__
+                if eb_cls == 'IfStmt':
+                    # else if チェーン: "} else {" を emit して再帰
+                    self._emit("} else {")
+                    self.indent_level += 1
+                    self._generate_sm_stmt(stmt.else_block, func, has_return_val)
+                    self.indent_level -= 1
+                else:
+                    self._emit("} else {")
+                    self.indent_level += 1
+                    for s in stmt.else_block.statements:
+                        self._generate_sm_stmt(s, func, has_return_val)
+                    self.indent_level -= 1
+            self._emit("}")
         else:
             self._generate_statement(stmt)
 
