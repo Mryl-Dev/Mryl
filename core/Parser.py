@@ -323,6 +323,24 @@ class Parser:
     # Type parsing
     # ============================================================
     def parse_type(self):
+        # fn(T, U) -> V  /  async fn(T) -> V  (#41)
+        if self.current.kind in (TokenKind.FN, TokenKind.ASYNC):
+            is_async = self.current.kind == TokenKind.ASYNC
+            if is_async:
+                self.advance()  # consume async
+            self.advance()  # consume fn
+            self.expect(TokenKind.LPAREN)
+            param_types = []
+            while self.current.kind != TokenKind.RPAREN:
+                param_types.append(self.parse_type())
+                if self.current.kind == TokenKind.COMMA:
+                    self.advance()
+            self.expect(TokenKind.RPAREN)
+            self.expect(TokenKind.ARROW)
+            ret_type = self.parse_type()
+            type_name = "async_fn" if is_async else "fn"
+            return TypeNode(type_name, type_args=param_types + [ret_type])
+
         tok = self.current
         name = tok.value
         line, col = tok.line, tok.column

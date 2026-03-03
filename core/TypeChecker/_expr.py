@@ -141,6 +141,14 @@ class TypeCheckerExprMixin:
         if name in self.const_table:
             return self.const_table[name]['type']
 
+        # トップレベル関数をコールバックとして渡す場合は fn 型として解決
+        if name in self.functions:
+            fn_decl = self.functions[name]
+            param_types = [p.type_node if p.type_node else TypeNode("any")
+                           for p in (fn_decl.params or [])]
+            ret_type = fn_decl.return_type if fn_decl.return_type else TypeNode("void")
+            return TypeNode("fn", type_args=param_types + [ret_type])
+
         raise TypeError_(f"Undefined variable: {name}", expr)
 
     # ============================================

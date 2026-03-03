@@ -399,7 +399,22 @@ class Interpreter:
         # Check const table
         if name in self.const_table:
             return self.const_table[name]
-        
+
+        # トップレベル関数を第一級値（コールバック）として参照する場合
+        if name in self.functions:
+            entry = self.functions[name]
+            if not (isinstance(entry, tuple) and entry[0] == "builtin"):
+                # FunctionDecl をラムダ互換 dict で包む
+                func = entry
+                return {
+                    '__lambda__': True,
+                    '__named_fn__': name,  # デバッグ用
+                    'params': func.params,
+                    'body': func.body,
+                    'is_async': getattr(func, 'is_async', False),
+                    'captured_env': [],  # トップレベルなのでキャプチャなし
+                }
+
         raise RuntimeError(f"Undefined variable: {name}")
 
     # ============================================================

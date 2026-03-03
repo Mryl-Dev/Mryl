@@ -150,11 +150,11 @@ class TypeCheckerCallMixin:
     # FunctionCall（ジェネリクス解決含む）
     # ============================================
     def check_call(self, expr: FunctionCall):
-        # ラムダ変数への呼び出し
+        # ラムダ変数 / fn型パラメータへの呼び出し (#41)
         for scope in reversed(self.env):
             if expr.name in scope:
                 var_type = scope[expr.name]
-                if isinstance(var_type, TypeNode) and var_type.name == "fn":
+                if isinstance(var_type, TypeNode) and var_type.name in ("fn", "async_fn"):
                     if var_type.type_args:
                         return var_type.type_args[-1]
                     return TypeNode("void")
