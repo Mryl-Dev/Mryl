@@ -15,6 +15,8 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
 
         if stmt_class == "LetDecl":
             self._generate_let(stmt)
+        elif stmt_class == "FixDecl":
+            self._generate_fix(stmt)
         elif stmt_class == "ReturnStmt":
             self._generate_return(stmt)
         elif stmt_class == "BreakStmt":
@@ -186,6 +188,43 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 self.env[-1][stmt.name] = inferred_type
                 if inferred_type == "string":
                     self.local_string_vars.append(stmt.name)
+
+    def _generate_fix(self, stmt):
+        """fix 宣言を C の const 変数宣言として出力する。
+        let と同じロジックだが、出力に const 修飾子を付ける。
+        配列・動的配列・文字列も対応。
+        """
+        type_node       = stmt.type_node
+        init_expr_class = stmt.init_expr.__class__.__name__ if stmt.init_expr else None
+
+        var_type = self._type_to_c(type_node)
+        init_expr = self._generate_expr_with_temps(stmt.init_expr, {})
+
+        # 固定長配列
+        if type_node and type_node.array_size is not None and type_node.array_size > 0:
+            base_type = self._type_to_c_base(type_node.name)
+            if init_expr_class == "ArrayLiteral":
+                elements    = [self._generate_expr(elem) for elem in stmt.init_expr.elements]
+                init_values = "{" + ", ".join(elements) + "}"
+                self._emit(f"const {base_type} {stmt.name}[{type_node.array_size}] = {init_values};")
+            else:
+                self._emit(f"const {base_type} {stmt.name}[{type_node.array_size}] = {{0}};")
+            self.array_sizes[stmt.name] = type_node.array_size
+            self.env[-1][stmt.name] = type_node.name
+            return
+
+        # 通常の scalar / struct 型
+        self._emit(f"const {var_type} {stmt.name} = {init_expr};")
+        if type_node:
+            mryl_name = type_node.name
+            if getattr(type_node, 'type_args', None):
+                suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
+                mryl_name = f"{type_node.name}_{suffix}"
+            self.env[-1][stmt.name] = mryl_name
+            # string は fix では所有権管理しない (const 文字列リテラルが多い想定)
+        else:
+            inferred_type = self._infer_expr_type(stmt.init_expr)
+            self.env[-1][stmt.name] = inferred_type
 
     def _generate_return(self, stmt):
         """return 文を出力する。

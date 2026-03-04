@@ -58,10 +58,11 @@ class FunctionDecl(AST):
         self.is_async = is_async
 
 class Param(AST):
-    def __init__(self, name, type_node, line=None, column=None):
+    def __init__(self, name, type_node, line=None, column=None, is_fix=False):
         super().__init__(line, column)
         self.name = name
         self.type_node = type_node
+        self.is_fix = is_fix  # True if declared with fix keyword
 
 # ============================================================
 # Type: Type representation with generics and arrays
@@ -99,6 +100,14 @@ class Statement(AST):
         super().__init__(line, column)
 
 class LetDecl(Statement):
+    def __init__(self, name, type_node, init_expr, line=None, column=None):
+        super().__init__(line, column)
+        self.name = name
+        self.type_node = type_node
+        self.init_expr = init_expr
+
+class FixDecl(Statement):
+    """Immutable local variable declaration: fix x: T = expr;"""
     def __init__(self, name, type_node, init_expr, line=None, column=None):
         super().__init__(line, column)
         self.name = name

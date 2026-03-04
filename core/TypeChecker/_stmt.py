@@ -28,6 +28,9 @@ class TypeCheckerStmtMixin:
         if isinstance(stmt, LetDecl):
             self.check_let(stmt)
 
+        elif isinstance(stmt, FixDecl):
+            self.check_fix(stmt)
+
         elif isinstance(stmt, Assignment):
             self.check_assignment(stmt)
 
@@ -87,8 +90,27 @@ class TypeCheckerStmtMixin:
         self.env[-1][stmt.name] = stmt.type_node
 
     # ============================================
-    # const
+    # fix (不変変数)
     # ============================================
+    def check_fix(self, stmt: FixDecl):
+        if stmt.init_expr is None:
+            raise TypeError_(f"'fix' declaration '{stmt.name}' must have an initializer", stmt)
+
+        if stmt.type_node is None:
+            # 型推論
+            inferred = self.check_expr(stmt.init_expr)
+            stmt.type_node = inferred
+        else:
+            expr_type = self.check_expr(stmt.init_expr)
+            if not self.types_equal(expr_type, stmt.type_node):
+                raise TypeError_(
+                    f"Type mismatch in fix {stmt.name}: expected {stmt.type_node}, got {expr_type}",
+                    stmt.init_expr
+                )
+
+        # 変数をスコープに登録 + 不変セットに追加
+        self.env[-1][stmt.name] = stmt.type_node
+        self.fix_vars.add(stmt.name)
     def check_const_decl(self, stmt: ConstDecl):
         """Check const declaration and evaluate its value"""
         try:
@@ -117,6 +139,10 @@ class TypeCheckerStmtMixin:
     # 代入
     # ============================================
     def check_assignment(self, stmt: Assignment):
+        # 不変変数への再代入チェック
+        if isinstance(stmt.target, VarRef) and stmt.target.name in self.fix_vars:
+            raise TypeError_(f"Cannot assign to immutable variable '{stmt.target.name}' (declared with 'fix')", stmt)
+
         target_type = self.check_expr(stmt.target)
         expr_type = self.check_expr(stmt.expr)
 

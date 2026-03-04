@@ -32,6 +32,7 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         self.enums       = {}  # name -> EnumDecl
         self.env         = []  # スコープスタック（辞書のリスト）
         self.const_table = {}  # name -> {type, expr}
+        self.fix_vars    = set()  # fix 宣言された不変変数名のセット
 
         # ---- 組み込み関数 ----
         self.functions["print"] = FunctionDecl(
@@ -157,10 +158,17 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         if method.body is None:
             return
         self.env = [{}]
+        saved_fix_vars = self.fix_vars
+        self.fix_vars = set()
         method.params[0].type_node = TypeNode(struct.name)  # self パラメータの型を解決
         for p in method.params:
             self.env[-1][p.name] = p.type_node
-        self.check_block(method.body, method.return_type)
+            if getattr(p, 'is_fix', False):
+                self.fix_vars.add(p.name)
+        try:
+            self.check_block(method.body, method.return_type)
+        finally:
+            self.fix_vars = saved_fix_vars
 
     # ============================================
     # 関数
@@ -174,6 +182,13 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
             return
 
         self.env = [{}]
+        saved_fix_vars = self.fix_vars
+        self.fix_vars = set()
         for p in func.params:
             self.env[-1][p.name] = p.type_node
-        self.check_block(func.body, func.return_type)
+            if getattr(p, 'is_fix', False):
+                self.fix_vars.add(p.name)
+        try:
+            self.check_block(func.body, func.return_type)
+        finally:
+            self.fix_vars = saved_fix_vars

@@ -447,7 +447,7 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
     def _emit_task_factory(self, func, sm_struct: str, move_next: str, for_inits=None):
         """タスクファクトリ関数を出力する (async fn の entry point) """
         func_name  = func.name
-        params     = [f"{self._type_to_c(p.type_node)} {p.name}" for p in (func.params or [])]
+        params     = [f"{'const ' if getattr(p, 'is_fix', False) else ''}{self._type_to_c(p.type_node)} {p.name}" for p in (func.params or [])]
         params_str = ", ".join(params) if params else "void"
         self._emit(f"MrylTask* {func_name}({params_str}) {{") 
         self.indent_level += 1

@@ -309,6 +309,12 @@ class Parser:
         return params
 
     def parse_param(self):
+        # fix 修飾子のチェック: fn foo(fix x: i32)
+        is_fix = False
+        if self.current.kind == TokenKind.FIX:
+            is_fix = True
+            self.advance()  # consume fix
+
         tok = self.current
         name = tok.value
         line, col = tok.line, tok.column
@@ -317,7 +323,7 @@ class Parser:
         self.expect(TokenKind.COLON)
         type_node = self.parse_type()
 
-        return Param(name, type_node, line, col)
+        return Param(name, type_node, line, col, is_fix=is_fix)
 
     # ============================================================
     # Type parsing
@@ -379,6 +385,9 @@ class Parser:
         if tok == TokenKind.LET:
             return self.parse_let_decl()
 
+        if tok == TokenKind.FIX:
+            return self.parse_fix_decl()
+
         if tok == TokenKind.IF:
             return self.parse_if_stmt()
 
@@ -430,6 +439,28 @@ class Parser:
 
         self.expect(TokenKind.SEMICOLON)
         return LetDecl(name, type_node, init_expr, line, col)
+
+    def parse_fix_decl(self):
+        """Parse: fix name: Type = expr;"""
+        tok = self.current
+        self.expect(TokenKind.FIX)
+
+        name = self.current.value
+        line, col = self.current.line, self.current.column
+        self.expect(TokenKind.IDENT)
+
+        type_node = None
+        if self.match(TokenKind.COLON):
+            type_node = self.parse_type()
+
+        init_expr = None
+        if self.match(TokenKind.EQ):
+            init_expr = self.parse_expr()
+        else:
+            raise SyntaxError_(f"'fix' declaration '{name}' must have an initializer", self.current)
+
+        self.expect(TokenKind.SEMICOLON)
+        return FixDecl(name, type_node, init_expr, line, col)
 
     def parse_const_decl(self):
         tok = self.current
@@ -1123,7 +1154,9 @@ class Parser:
                 self.advance()  # )
                 return self.current.kind == TokenKind.FAT_ARROW
 
-            # First param must be an identifier
+            # First param: optional 'fix' modifier, then identifier
+            if self.current.kind == TokenKind.FIX:
+                self.advance()  # consume fix
             if self.current.kind != TokenKind.IDENT:
                 return False
             self.advance()  # param name
@@ -1138,6 +1171,8 @@ class Parser:
             # Additional params
             while self.current.kind == TokenKind.COMMA:
                 self.advance()  # ,
+                if self.current.kind == TokenKind.FIX:
+                    self.advance()  # consume fix
                 if self.current.kind != TokenKind.IDENT:
                     return False
                 self.advance()  # param name
@@ -1164,22 +1199,26 @@ class Parser:
 
         params = []
         if self.current.kind != TokenKind.RPAREN:
+            p_is_fix = self.current.kind == TokenKind.FIX
+            if p_is_fix: self.advance()
             pname = self.current.value
             pline, pcol = self.current.line, self.current.column
             self.expect(TokenKind.IDENT)
             ptype = None
             if self.match(TokenKind.COLON):
                 ptype = self.parse_type()
-            params.append(Param(pname, ptype, pline, pcol))
+            params.append(Param(pname, ptype, pline, pcol, is_fix=p_is_fix))
 
             while self.match(TokenKind.COMMA):
+                p_is_fix = self.current.kind == TokenKind.FIX
+                if p_is_fix: self.advance()
                 pname = self.current.value
                 pline, pcol = self.current.line, self.current.column
                 self.expect(TokenKind.IDENT)
                 ptype = None
                 if self.match(TokenKind.COLON):
                     ptype = self.parse_type()
-                params.append(Param(pname, ptype, pline, pcol))
+                params.append(Param(pname, ptype, pline, pcol, is_fix=p_is_fix))
 
         self.expect(TokenKind.RPAREN)
         self.expect(TokenKind.FAT_ARROW)

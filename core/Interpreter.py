@@ -105,6 +105,7 @@ class Interpreter:
         self.enums = {}       # name -> EnumDecl
         self.env = []         # list of dict (scope stack)
         self.const_table = {} # name -> {type, value}
+        self.fix_vars = set() # fix 宣言された不変変数名のセット
         self.call_stack: list = []          # list of CallFrame (runtime call trace)
         self.source_file: str = "<unknown>" # current source file name (set from runner)
 
@@ -256,6 +257,11 @@ class Interpreter:
 
         # Push new scope and execute
         self.env.append(new_env)
+        saved_fix_vars = self.fix_vars      # 呼び出し元の fix_vars を退避
+        self.fix_vars = set()               # 関数スコープは新しいセット
+        for param in func.params:           # fix 仮引数を登録
+            if getattr(param, 'is_fix', False):
+                self.fix_vars.add(param.name)
 
         try:
             _ = self.eval_block(func.body)
@@ -266,6 +272,7 @@ class Interpreter:
             if self.env and self.env[-1] is new_env:
                 self.env.pop()
             self.call_stack.pop()
+            self.fix_vars = saved_fix_vars  # 呼び出し元の fix_vars を復元
 
         return None
 
@@ -312,10 +319,17 @@ class Interpreter:
             return {'__future__': True, 'task': task, 'loop': loop}
 
         if isinstance(body, Block):
+            saved_fix_vars = self.fix_vars  # lambda スコープ用に退避
+            self.fix_vars = set()
+            for param in params:            # fix 仮引数を登録
+                if getattr(param, 'is_fix', False):
+                    self.fix_vars.add(param.name)
             try:
                 self.exec_block(body, captured_env)
             except ReturnSignal as rs:
                 return rs.value
+            finally:
+                self.fix_vars = saved_fix_vars
             return None
         else:
             return self.eval_expr(body, captured_env)
@@ -363,11 +377,14 @@ class Interpreter:
         
         Raises:
             RuntimeError: If variable not found in any scope
+            RuntimeError: If variable is immutable (declared with fix)
         
         Notes:
             - Searches from innermost to outermost scope
             - Updates first matching variable (shadowing)
         """
+        if name in self.fix_vars:
+            raise RuntimeError(f"Cannot assign to immutable variable '{name}' (declared with 'fix')")
         for scope in reversed(env):
             if name in scope:
                 scope[name] = value
@@ -464,6 +481,11 @@ class Interpreter:
             if stmt.init_expr:
                 value = self.eval_expr(stmt.init_expr, env)
             self.set_var(env, stmt.name, value)
+
+        elif isinstance(stmt, FixDecl):
+            value = self.eval_expr(stmt.init_expr, env)
+            self.set_var(env, stmt.name, value)
+            self.fix_vars.add(stmt.name)
 
         elif isinstance(stmt, Assignment):
             self.exec_assignment(stmt, env)

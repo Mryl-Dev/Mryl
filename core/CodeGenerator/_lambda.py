@@ -108,11 +108,15 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
             params_c.append(f"{ptype} {p.name}")
         params_str = ", ".join(params_c) if params_c else "void"
 
-        saved_code        = self.code
-        saved_indent      = self.indent_level
-        saved_capture_map = dict(self.capture_map)
-        self.code         = []
-        self.indent_level = 1
+        saved_code             = self.code
+        saved_indent           = self.indent_level
+        saved_capture_map      = dict(self.capture_map)
+        saved_local_str_vars   = list(getattr(self, 'local_string_vars', []))
+        saved_temp_str_ctr     = getattr(self, 'temp_string_counter', 0)
+        self.code              = []
+        self.indent_level      = 1
+        self.local_string_vars = []
+        self.temp_string_counter = 0
         if captures:
             self.capture_map = {n: f"__env->{n}" for n in captures}
 
@@ -126,10 +130,12 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
             self._emit(f"return {body_expr};")
             ret_type  = "int32_t"
 
-        body_lines        = self.code
-        self.code         = saved_code
-        self.indent_level = saved_indent
-        self.capture_map  = saved_capture_map
+        body_lines             = self.code
+        self.code              = saved_code
+        self.indent_level      = saved_indent
+        self.capture_map       = saved_capture_map
+        self.local_string_vars = saved_local_str_vars
+        self.temp_string_counter = saved_temp_str_ctr
 
         self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines, captures))
         return lam_name
@@ -165,12 +171,16 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
         else:
             ret_type = "int32_t"
 
-        saved_code        = self.code
-        saved_indent      = self.indent_level
-        saved_capture_map = dict(self.capture_map)
-        body_lines_code   = []
-        self.code         = body_lines_code
-        self.indent_level = 1
+        saved_code             = self.code
+        saved_indent           = self.indent_level
+        saved_capture_map      = dict(self.capture_map)
+        saved_local_str_vars   = list(getattr(self, 'local_string_vars', []))
+        saved_temp_str_ctr     = getattr(self, 'temp_string_counter', 0)
+        body_lines_code        = []
+        self.code              = body_lines_code
+        self.indent_level      = 1
+        self.local_string_vars = []
+        self.temp_string_counter = 0
         if captures:
             self.capture_map = {n: f"__env->{n}" for n in captures}
 
@@ -181,9 +191,11 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
             body_expr_code = self._generate_expr(expr.body)
             self._emit(f"return {body_expr_code};")
 
-        self.code         = saved_code
-        self.indent_level = saved_indent
-        self.capture_map  = saved_capture_map
+        self.code              = saved_code
+        self.indent_level      = saved_indent
+        self.capture_map       = saved_capture_map
+        self.local_string_vars = saved_local_str_vars
+        self.temp_string_counter = saved_temp_str_ctr
 
         self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines_code, captures))
         return lam_name, ret_type, params_str, captures

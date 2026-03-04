@@ -320,13 +320,14 @@ class CodeGenerator(
     # ------------------------------------------------------------------
     # 関数・メソッド生成
     # ------------------------------------------------------------------
-    def _fn_param_decl(self, param_name: str, type_node) -> str:
+    def _fn_param_decl(self, param_name: str, type_node, is_fix: bool = False) -> str:
         """パラメータの C 宣言文字列を返す。fn(T)->V は関数ポインタ構文に変換する。"""
         if type_node and type_node.name in ("fn", "async_fn") and getattr(type_node, 'type_args', None):
             ret_t  = self._type_to_c(type_node.type_args[-1])
             arg_cs = ", ".join(self._type_to_c(t) for t in type_node.type_args[:-1]) or "void"
             return f"{ret_t} (*{param_name})({arg_cs})"
-        return f"{self._type_to_c(type_node)} {param_name}"
+        const_prefix = "const " if is_fix else ""
+        return f"{const_prefix}{self._type_to_c(type_node)} {param_name}"
 
     def _generate_function(self, func):
         """関数宣言から C コードを生成する。"""
@@ -334,7 +335,7 @@ class CodeGenerator(
         if func.body is None:
             ret_t  = self._type_to_c(func.return_type) if func.return_type else "void"
             params = ", ".join(
-                self._fn_param_decl(p.name, p.type_node) for p in func.params
+                self._fn_param_decl(p.name, p.type_node, getattr(p, 'is_fix', False)) for p in func.params
             ) or "void"
             self._emit(f"{ret_t} {func.name}({params});")
             self._emit("")
@@ -371,7 +372,7 @@ class CodeGenerator(
 
         params = []
         for param in func.params:
-            params.append(self._fn_param_decl(param.name, param.type_node))
+            params.append(self._fn_param_decl(param.name, param.type_node, getattr(param, 'is_fix', False)))
 
         params_str = ", ".join(params) if params else "void"
 

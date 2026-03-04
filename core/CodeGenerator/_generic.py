@@ -34,7 +34,9 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
         new_params = []
         for param in func.params:
             new_type = self._substitute_type_node(param.type_node, subst)
-            new_params.append(Param(param.name, new_type, param.line, param.column))
+            new_p = Param(param.name, new_type, param.line, param.column)
+            new_p.is_fix = getattr(param, 'is_fix', False)
+            new_params.append(new_p)
 
         new_return_type = self._substitute_type_node(func.return_type, subst) if func.return_type else None
 
