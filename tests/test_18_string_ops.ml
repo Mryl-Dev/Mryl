@@ -33,8 +33,6 @@ fn concat_three(a: string, b: string, c: string) -> string {
 
 // ----------------------------------------------------------
 // C. string 比較 (== / !=) / C1: true/false 両ケース
-// [SKIP Bug#16] string == string が C で MrylString 直接比較 (==) に変換され
-//   コンパイルエラー。strcmp(a.data, b.data) への変換が必要。
 // ----------------------------------------------------------
 fn str_eq(a: string, b: string) -> i32 {
     if (a == b) {
@@ -67,8 +65,6 @@ fn sign_string(n: i32) -> string {
 // E. MC/DC ヘルパー
 //    str_len_3(s) → s の長さが3なら 1, 違えば 0
 //    combine_check(len3, eq) → len3==1 && eq==1 → 1
-// [SKIP Bug#16] str_len_is3 内の s == "abc" 等がコンパイルエラー
-//   → str_len_is3 は i32 引数で代用し combine_check のみをテスト
 // ----------------------------------------------------------
 fn str_len_is3(s: string) -> i32 {
     if (s == "abc") { return 1; }

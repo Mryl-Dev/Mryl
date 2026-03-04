@@ -16,12 +16,6 @@
 //       {n>0=F, *}           "other" (n>0=F が単独決定: n=0)
 //       {n>0=T, n<100=F}     "other" (n<100=F が単独決定: n=100)
 //       {n>0=T, n<100=T}     "small" (両方 T: n=50)
-//
-// 既知バグ:
-//   Bug#11: bool を println すると Python=True/False, C=1/0 で不一致
-//            bool 直接 println / to_string(bool) を SKIP
-//   Bug#8:  f64 を直接 println すると C native で %d になる可能性
-//            実行して確認、壊れたら SKIP
 // ============================================================
 
 // E. MC/DC 用ヘルパー
@@ -52,14 +46,10 @@ fn main() -> i32 {
     println("hello world");              // hello world
     println(42);                         // 42
 
-    // [Bug#13 SKIP] f64 直接 println → Python=3.14 / C=3.140000 で不一致
-    // println(3.14);
-    println("f64 direct println: (SKIP Bug#13)");
+    println(3.14);                        // 3.14
 
-    // [Bug#11 SKIP] bool 直接 println  Python=True/C=1 で不一致
-    // println(true);
-    // println(false);
-    println("bool direct println: (SKIP Bug#11)");
+    println(true);                        // true
+    println(false);                       // false
 
     // ----------------------------------------------------------
     // C. println フォーマット文字列 / C1: 引数数ごと
@@ -68,18 +58,14 @@ fn main() -> i32 {
     let i = 10;
     println("i={}", i);                  // i=10
 
-    // [Bug#13 SKIP] f64 フォーマット → Python=3.14 / C=3.140000 で不一致
-    // let f = 3.14;
-    // println("f={}", f);
-    println("f64 format: (SKIP Bug#13)");
+    let f = 3.14;
+    println("f={}", f);                   // f=3.14
 
     let s = "Mryl";
     println("lang={}", s);               // lang=Mryl
 
-    // [Bug#11 SKIP] bool フォーマット  Python=True/C=1
-    // let b = true;
-    // println("flag={}", b);
-    println("bool format: (SKIP Bug#11)");
+    let b = true;
+    println("flag={}", b);               // flag=true
 
     // 複数引数
     let x = 5;
@@ -112,11 +98,9 @@ fn main() -> i32 {
     let sf = to_string(fv);
     println("to_string(3.14)={}", sf);   // 3.14
 
-    // [Bug#11 SKIP] to_string(bool)  まだ不一致 (Python=True/false, C=1)
-    // let flag = true;
-    // let sb = to_string(flag);
-    // println("to_string(true)={}", sb);
-    println("to_string(bool): (SKIP Bug#11)");
+    let flag = true;
+    let sb = to_string(flag);
+    println("to_string(true)={}", sb);   // to_string(true)=true
 
     let val = 100;
     let msg = to_string(val);
