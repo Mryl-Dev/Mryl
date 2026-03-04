@@ -1,10 +1,10 @@
 ﻿// ============================================================
 // Test 08: 配列 (固定長 / 動的配列)
-//   A. 固定長配列 (定義アクセス代入)
+//   A. 固定長配列 (定義アクセス代入) i32 / f64 / string
 //   B. 動的配列 (push / pop / len / is_empty)
 //   C. 動的配列 insert / remove
 //   D. for-in ループ (配列 + 範囲)
-//   E. 配列 + 条件分岐 (C1 + MC/DC)
+//   E. 配列 + 条件分岐 / 動的 string[] (C1 + MC/DC)
 //
 // カバレッジ観点:
 //   C0  : 全メソッド (push/pop/insert/remove/len/is_empty) を1回以上実行
@@ -16,12 +16,6 @@
 //       {n>0=F, *}           skip (n=0: n>0=F が単独決定)
 //       {n>0=T, n%2==0=F}    skip (n=1: n%2==0=F が単独決定)
 //       {n>0=T, n%2==0=T}    push (n=2: 両方 T で push)
-//
-// 既知バグ:
-//   Bug#7: string 配列の要素が C native で %d になる
-//           string[] セクションをスキップ
-//   Bug#8: f64 配列の要素が C native で %d になる
-//           float[] セクションをスキップ
 // ============================================================
 
 fn main() -> i32 {
@@ -45,14 +39,16 @@ fn main() -> i32 {
     }
     // 1 2 99 4 5
 
-    // [SKIP Bug#8] f64 固定長配列
-    // let floats = [1.1, 2.2, 3.3];
-    // println("f[1]={}", floats[1]);  // 2.2
+    // f64 固定長配列
+    let floats = [1.1, 2.2, 3.3];
+    println("f[1]={}", floats[1]);     // 2.2
 
-    // [SKIP Bug#7] string 固定長配列
-    // let words = ["apple", "banana", "cherry"];
-    // for w in words { println("{}", w); }
-    println("--- A: f64/string Array (SKIP Bug#7/8) ---");
+    // string 固定長配列
+    let words = ["apple", "banana", "cherry"];
+    println("w[0]={}", words[0]);      // apple
+    for w in words { println("{}", w); }
+    // apple banana cherry
+    println("--- A: f64/string Array ---");
 
     // ----------------------------------------------------------
     // B. 動的配列 / C1: is_empty + while ループ
@@ -159,12 +155,14 @@ fn main() -> i32 {
     }
     // 2 4
 
-    // [SKIP Bug#7] string 動的配列
-    // let tags: string[] = [];
-    // tags.push("rust"); tags.push("Mryl");
-    // println("tags.len={}", tags.len());  // 2
-    // for t in tags { println("{}", t); }
-    println("--- E: string[] (SKIP Bug#7) ---");
+    // string 動的配列
+    let tags: string[] = [];
+    tags.push("rust");
+    tags.push("Mryl");
+    println("tags.len={}", tags.len());  // 2
+    for t in tags { println("{}", t); }
+    // rust Mryl
+    println("--- E: string[] ---");
 
     println("=== OK ===");
     return 0;

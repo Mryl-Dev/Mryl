@@ -2,7 +2,7 @@
 // Test 07: Result<T,E> / Ok / Err / .try()
 //   A. 基本 Result (Ok/Err return + match)
 //   B. C1: Ok アーム / Err アーム両方を実行
-//   C. f64 Result  [Bug#8: C native で f64 が %d  SKIP]
+//   C. f64 Result  (近似平方根 safe_sqrt)
 //   D. .try() 成功パス
 //   E. Result を使った処理チェーン
 //
@@ -20,7 +20,6 @@
 // 既知バグ:
 //   Bug#7: Err(string) の中身を println で表示すると C native でゴミ値
 //           Err アームでは文字列を print せずセンチネル値(-1)を返す
-//   Bug#8: f64 が C native で %d 扱い  safe_sqrt セクションをスキップ
 // ============================================================
 
 // ----------------------------------------------------------
@@ -44,17 +43,17 @@ fn safe_divide(a: i32, b: i32) -> Result<i32, string> {
 }
 
 // ----------------------------------------------------------
-// C. f64 Result [Bug#8 SKIP]
+// C. f64 Result (近似平方根)
 // ----------------------------------------------------------
-// fn safe_sqrt(x: f64) -> Result<f64, string> {
-//     if (x < 0.0) {
-//         return Err("negative input");
-//     }
-//     let g = x / 2.0;
-//     g = (g + x / g) / 2.0;
-//     g = (g + x / g) / 2.0;
-//     return Ok(g);
-// }
+fn safe_sqrt(x: f64) -> Result<f64, string> {
+    if (x < 0.0) {
+        return Err("negative input");
+    }
+    let g = x / 2.0;
+    g = (g + x / g) / 2.0;
+    g = (g + x / g) / 2.0;
+    return Ok(g);
+}
 
 fn parse_positive(n: i32) -> Result<i32, string> {
     if (n <= 0) {
@@ -139,16 +138,16 @@ fn main() -> i32 {
     println("pp(0)={}", vp3);    // -1
 
     // ----------------------------------------------------------
-    // C. f64 Result [SKIP Bug#8]
+    // C. f64 Result
     // ----------------------------------------------------------
-    println("--- C: f64 Result (SKIP Bug#8) ---");
-    // let sr1 = safe_sqrt(9.0);
-    // let sv1: f64 = match sr1 { Ok(v) => v, Err(e) => -1.0 };
-    // println("sqrt(9)={}", sv1);     // ~3.0
-    //
-    // let sr2 = safe_sqrt(-4.0);
-    // let sv2: f64 = match sr2 { Ok(v) => v, Err(e) => -1.0 };
-    // println("sqrt(-4)={}", sv2);    // -1.0
+    println("--- C: f64 Result ---");
+    let sr1 = safe_sqrt(9.0);
+    let sv1: f64 = match sr1 { Ok(v) => v, Err(e) => -1.0 };
+    println("sqrt(9)={}", sv1);       // ~3
+
+    let sr2 = safe_sqrt(-4.0);
+    let sv2: f64 = match sr2 { Ok(v) => v, Err(e) => -1.0 };
+    println("sqrt(-4)={}", sv2);      // -1
 
     // ----------------------------------------------------------
     // MC/DC: safe_divide (a < 0 || b == 0)
