@@ -213,9 +213,15 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
+        self._emit("static MrylString _mryl_to_string_bool(int n) {")
+        self.indent_level += 1
+        self._emit("return make_mryl_string(n ? \"true\" : \"false\");")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
         self._emit("static MrylString _mryl_to_string_string(MrylString s) { return make_mryl_string(s.data); }")
         self._emit("")
-        self._emit("#define to_string(x) _Generic((x), double: _mryl_to_string_f64, float: _mryl_to_string_f64, MrylString: _mryl_to_string_string, default: _mryl_to_string_i32)(x)")
+        self._emit("#define to_string(x) _Generic((x), double: _mryl_to_string_f64, float: _mryl_to_string_f64, MrylString: _mryl_to_string_string, _Bool: _mryl_to_string_bool, default: _mryl_to_string_i32)(x)")
         self._emit("")
 
     def _emit_header(self):

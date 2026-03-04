@@ -1275,6 +1275,8 @@ class Interpreter:
             return self.format_string(args)
         
         # Simple string conversion
+        if isinstance(args[0], bool):
+            return "true" if args[0] else "false"
         return str(args[0])
 
     def format_string(self, args):
@@ -1304,7 +1306,13 @@ class Interpreter:
         
         if not isinstance(args[0], str):
             # If no format string, concatenate all arguments
-            return "".join(str(a) for a in args)
+            def _val_to_str(v):
+                if isinstance(v, bool):
+                    return "true" if v else "false"
+                elif isinstance(v, float):
+                    return f"{v:g}"
+                return str(v)
+            return "".join(_val_to_str(a) for a in args)
         
         format_str = args[0]
         rest_args = args[1:]

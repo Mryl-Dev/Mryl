@@ -134,6 +134,11 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 self._register_generic_instantiation(expr.name, type_args)
                 instantiated_name = self._get_instantiated_func_name(expr.name, type_args_tuple)
                 return f"{instantiated_name}({', '.join(args)})"
+            # to_string(bool) → _mryl_to_string_bool を直接呼び出す
+            if expr.name == "to_string" and len(expr.args) == 1:
+                arg_type = self._infer_expr_type(expr.args[0])
+                if arg_type == "bool":
+                    return f"_mryl_to_string_bool({', '.join(args)})"
             return f"{expr.name}({', '.join(args)})"
 
         if expr_class == "BinaryOp":
@@ -188,6 +193,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             instantiated_name = self._get_instantiated_func_name(expr.name, type_args_tuple)
             args              = ", ".join(self._generate_expr(arg) for arg in expr.args)
             return f"{instantiated_name}({args})"
+
+        # to_string(bool) → _mryl_to_string_bool を直接呼び出す
+        # (Mryl の bool は C の int にマップされるため _Generic の _Bool ブランチに
+        #  マッチしない。引数の Mryl 型を見て直接ディスパッチする)
+        if expr.name == "to_string" and len(expr.args) == 1:
+            arg_type = self._infer_expr_type(expr.args[0])
+            if arg_type == "bool":
+                arg_code = self._generate_expr(expr.args[0])
+                return f"_mryl_to_string_bool({arg_code})"
 
         args = ", ".join(self._generate_expr(arg) for arg in expr.args)
         return f"{expr.name}({args})"
