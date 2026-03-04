@@ -3,7 +3,7 @@
 //   A. 型付き宣言 (i8〜i64, f32/f64, string, bool)
 //   B. 型推論 (let 推論)
 //   C. 関数戻り値型 (i32/string/bool) - C1
-//   D. ジェネリック型推論 [Bug#11 (bool) のみ SKIP 残存]
+//   D. ジェネリック型推論
 //   E. 型昇格 (i8+i32, f32+f64, i16+i64) + MC/DC
 //
 // カバレッジ観点:
@@ -17,11 +17,8 @@
 //       {x>=lo=T, x<=hi=T}   true  (x=5: 両方 T)
 //
 // 既知バグ:
-//   Bug#4:  ジェネリック戻り値 f64/string で printf が %d になる
-//   Bug#7:  struct の string フィールドが C で %d になる
-//   Bug#8:  struct の f64 フィールドが C で %d になる
-//   Bug#11: bool 出力が Python=True/False, C=1/0 で不一致
-//   Bug#13: f64 format 出力が Python=3.14 / C=3.140000 で不一致
+//   Bug#7: struct の string フィールドが C で %d になる
+//   Bug#8: struct の f64 フィールドが C で %d になる
 // ============================================================
 
 fn typed_add(a: i32, b: i32) -> i32 {
@@ -139,10 +136,8 @@ fn main() -> i32 {
     let gaf: f64 = add_generic(1.5, 2.5);
     println("add<f64>={}", gaf);
 
-    // [Bug#11 SKIP] identity(bool)
-    // let gb: bool = identity(true);
-    // println("id<bool>={}", gb);
-    println("id<bool>: (SKIP Bug#11)");
+    let gb: bool = identity(true);
+    println("id<bool>={}", gb);   // true
 
     // ----------------------------------------------------------
     // E. 型昇格 / C0 + MC/DC

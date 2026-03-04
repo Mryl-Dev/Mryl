@@ -117,8 +117,6 @@ fn main() -> i32 {
     println("triple(-2)={}", triple(0 - 2)); // -6
 
     // 複数パラメータ単一式
-    // [SKIP Bug#11] (a > b) の bool 直接 println は Python=True/False, C=1/0 不一致
-    // → ブロックボディで i32 に変換して表示
     let max2 = (a: i32, b: i32) => {
         if (a > b) { return 1; }
         return 0;
