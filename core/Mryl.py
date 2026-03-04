@@ -4,11 +4,21 @@ from TypeChecker import TypeChecker
 from Interpreter import Interpreter, MrylRuntimeError
 from CodeGenerator import CodeGenerator
 import subprocess
+import io
 import os
 import sys
 
 # Windows コンソールの cp932 エンコード問題を回避: stdout を UTF-8 に固定
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+# stdin がパイプ/ファイルの場合は先読みして両フェーズで共有する
+if not sys.stdin.isatty():
+    _stdin_bytes = sys.stdin.buffer.read()
+    _stdin_str   = _stdin_bytes.decode('utf-8', errors='replace')
+    sys.stdin    = io.StringIO(_stdin_str)   # Python インタープリタ用
+else:
+    _stdin_bytes = None
+    _stdin_str   = None
 
 # Get input file from command line argument, default to advanced_methods.ml
 # input_file = sys.argv[1] if len(sys.argv) > 1 else "./tests/test_10_async_await.ml"
@@ -104,9 +114,15 @@ try:
     if cwd[1:3] == ':\\':
         cwd = '/cygdrive/' + cwd[0].lower() + cwd[2:]
     exec_cmd = f"{cwd}/bin/Mryl.exe"
+
+    # stdin がパイプ/ファイルの場合はバイト列として取り込み、子プロセスに渡す
+    stdin_data = _stdin_bytes  # None の場合は子プロセスが独自に端末から読む
+
     exec_result = subprocess.run(
         [cygwin_bash, "-l", "-c", exec_cmd],
-        capture_output=True,
+        input=stdin_data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         cwd=os.getcwd()
     )
     if exec_result.stdout:
