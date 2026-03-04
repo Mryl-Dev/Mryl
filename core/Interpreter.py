@@ -114,6 +114,9 @@ class Interpreter:
             "print": self.builtin_print,
             "println": self.builtin_println,
             "to_string": self.builtin_to_string,
+            "read_line": self.builtin_read_line,
+            "parse_int": self.builtin_parse_int,
+            "parse_f64": self.builtin_parse_f64,
         }
 
         # Register built-in functions
@@ -1300,6 +1303,30 @@ class Interpreter:
         if isinstance(args[0], bool):
             return "true" if args[0] else "false"
         return str(args[0])
+
+    def builtin_read_line(self, args):
+        """Read one line from stdin, returning it with leading/trailing whitespace stripped."""
+        return input()
+
+    def builtin_parse_int(self, args):
+        """Parse a string to i32. Panics if the string is not a valid integer."""
+        if len(args) < 1:
+            raise RuntimeError("parse_int expects 1 argument")
+        s = str(args[0]).strip()
+        try:
+            return int(s)
+        except ValueError:
+            raise RuntimeError(f"parse_int: cannot parse '{s}' as i32")
+
+    def builtin_parse_f64(self, args):
+        """Parse a string to f64. Panics if the string is not a valid float."""
+        if len(args) < 1:
+            raise RuntimeError("parse_f64 expects 1 argument")
+        s = str(args[0]).strip()
+        try:
+            return float(s)
+        except ValueError:
+            raise RuntimeError(f"parse_f64: cannot parse '{s}' as f64")
 
     def format_string(self, args):
         """Format string with placeholder substitution.

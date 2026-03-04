@@ -128,6 +128,9 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             # 組み込みマクロ/関数の戻り値型を直接解決 (#25 to_string 対応)
             _builtin_return_types = {
                 "to_string": "string",
+                "read_line": "string",
+                "parse_int": "i32",
+                "parse_f64": "f64",
             }
             if expr.name in _builtin_return_types:
                 return _builtin_return_types[expr.name]

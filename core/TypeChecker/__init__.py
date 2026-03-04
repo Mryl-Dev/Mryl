@@ -56,6 +56,27 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
             body=None,
             type_params=[]
         )
+        self.functions["read_line"] = FunctionDecl(
+            name="read_line",
+            params=[],
+            return_type=TypeNode("string"),
+            body=None,
+            type_params=[]
+        )
+        self.functions["parse_int"] = FunctionDecl(
+            name="parse_int",
+            params=[Param("s", TypeNode("string"))],
+            return_type=TypeNode("i32"),
+            body=None,
+            type_params=[]
+        )
+        self.functions["parse_f64"] = FunctionDecl(
+            name="parse_f64",
+            params=[Param("s", TypeNode("string"))],
+            return_type=TypeNode("f64"),
+            body=None,
+            type_params=[]
+        )
 
     # ============================================
     # 型比較（ジェネリクス対応）

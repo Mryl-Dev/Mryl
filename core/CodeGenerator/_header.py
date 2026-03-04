@@ -223,6 +223,51 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self._emit("")
         self._emit("#define to_string(x) _Generic((x), double: _mryl_to_string_f64, float: _mryl_to_string_f64, MrylString: _mryl_to_string_string, _Bool: _mryl_to_string_bool, default: _mryl_to_string_i32)(x)")
         self._emit("")
+        self._emit("// ---- Input functions ----")
+        self._emit("static MrylString read_line(void) {")
+        self.indent_level += 1
+        self._emit("char buf[4096];")
+        self._emit("if (fgets(buf, sizeof(buf), stdin) == NULL) {")
+        self.indent_level += 1
+        self._emit("buf[0] = '\\0';")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("int len = (int)strlen(buf);")
+        self._emit("while (len > 0 && (buf[len-1] == '\\n' || buf[len-1] == '\\r')) {")
+        self.indent_level += 1
+        self._emit("buf[--len] = '\\0';")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("return make_mryl_string(buf);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
+        self._emit("static int32_t parse_int(MrylString s) {")
+        self.indent_level += 1
+        self._emit("char* __end;")
+        self._emit("long __v = strtol(s.data, &__end, 10);")
+        self._emit("if (__end == s.data || *__end != '\\0') {")
+        self.indent_level += 1
+        self._emit("mryl_panic(\"ParseError\", \"cannot parse string as i32\", __func__, __FILE__, __LINE__);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("return (int32_t)__v;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
+        self._emit("static double parse_f64(MrylString s) {")
+        self.indent_level += 1
+        self._emit("char* __end;")
+        self._emit("double __v = strtod(s.data, &__end);")
+        self._emit("if (__end == s.data || *__end != '\\0') {")
+        self.indent_level += 1
+        self._emit("mryl_panic(\"ParseError\", \"cannot parse string as f64\", __func__, __FILE__, __LINE__);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("return __v;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
 
     def _emit_header(self):
         """組み込み型・関数をまとめて出力する (内部利用) """
