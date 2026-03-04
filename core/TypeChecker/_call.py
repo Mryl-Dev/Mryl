@@ -101,9 +101,20 @@ class TypeCheckerCallMixin:
         if obj_type.name == "Result":
             if expr.method in ("is_ok", "is_err"):
                 return TypeNode("bool")
-            if expr.method in ("try", "unwrap", "unwrap_err", "err"):
+            if expr.method in ("try", "unwrap"):
+                # Ok 型 (第1型引数) を返す
+                if obj_type.type_args:
+                    return obj_type.type_args[0] if isinstance(obj_type.type_args[0], TypeNode) else TypeNode(obj_type.type_args[0])
+                return TypeNode("i32")
+            if expr.method in ("unwrap_err", "err"):
+                # Err 型 (第2型引数) を返す
+                if len(obj_type.type_args) >= 2:
+                    t = obj_type.type_args[1]
+                    return t if isinstance(t, TypeNode) else TypeNode(t)
                 return TypeNode("i32")
             if expr.method == "unwrap_or":
+                if obj_type.type_args:
+                    return obj_type.type_args[0] if isinstance(obj_type.type_args[0], TypeNode) else TypeNode(obj_type.type_args[0])
                 return TypeNode("i32")
             raise TypeError_(f"Result has no method '{expr.method}'", expr)
 

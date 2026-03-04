@@ -144,10 +144,18 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
 
         if expr_class == "MethodCall":
             obj_t = self._infer_expr_type(expr.obj)
-            if obj_t == "Result":
+            if obj_t == "Result" or obj_t.startswith("Result_"):
                 if expr.method in ("is_ok", "is_err"):
                     return "bool"
-                if expr.method in ("try", "unwrap", "unwrap_err", "unwrap_or", "err"):
+                if expr.method in ("try", "unwrap", "unwrap_or", "err"):
+                    # Result_<ok>_<err> の形式から ok 型を取り出す
+                    if obj_t.startswith("Result_") and obj_t != "Result_i32_i32":
+                        parts = obj_t[len("Result_"):].split("_", 1)
+                        return parts[0]  # e.g. "f64", "i32", "string"
+                    return "i32"
+                if expr.method in ("unwrap_err",):
+                    if obj_t.startswith("Result_") and len(obj_t.split("_")) >= 3:
+                        return obj_t.split("_", 2)[2]  # err 型
                     return "i32"
             # struct メソッドの戻り値型を検索 (#29/#30 正確な型推論)
             for struct in self.structs:
@@ -205,6 +213,22 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     for field in struct.fields:
                         if field.name == expr.field:
                             return subst.get(field.type_node.name, field.type_node.name)
+            return "i32"
+
+        if expr_class == "ArrayAccess":
+            # 配列要素の型を推論する (Bug#7/Bug#8 fix)
+            # 動的配列 vec_var_types[name] → 要素型
+            # 固定長配列 env[name] → 要素型が直接登録されている
+            arr_name = expr.array.name if expr.array.__class__.__name__ == 'VarRef' else None
+            if arr_name:
+                if arr_name in self.vec_var_types:
+                    return self.vec_var_types[arr_name]
+                for scope in reversed(self.env):
+                    if arr_name in scope:
+                        t = scope[arr_name]
+                        if t.startswith("vec_"):
+                            return t[4:]
+                        return t
             return "i32"
 
         return "i32"

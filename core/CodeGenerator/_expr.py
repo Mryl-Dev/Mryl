@@ -495,7 +495,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         # Result<T,E> のメソッド
         obj_type = self._infer_expr_type(expr.obj)
-        if obj_type == "Result":
+        if obj_type == "Result" or obj_type.startswith("Result_"):
             obj_code = self._generate_expr(expr.obj)
             if expr.method == "is_ok":
                 return f"({obj_code}.is_ok)"
