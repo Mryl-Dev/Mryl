@@ -157,6 +157,26 @@ fn main() -> i32 {
     // MC/DC: NOT  !false  1
     println("!false={}", !false);     // 1
 
+    // ----------------------------------------------------------
+    // G. fix 不変変数宣言 (C0: 全型で fix 宣言が実行される)
+    // ----------------------------------------------------------
+    println("--- G: Fix ---");
+    fix g_i32 : i32    = 99;
+    fix g_f64 : f64    = 2.718;
+    fix g_str : string = "fix";
+    fix g_bool: bool   = true;
+    fix g_inf  = 777;         // 型推論: i32
+    println("fix i32={}", g_i32);     // 99
+    println("fix f64={}", g_f64);     // 2.718000
+    println("fix str={}", g_str);     // fix
+    println("fix bool={}", g_bool);   // true
+    println("fix inf={}", g_inf);     // 777
+
+    // fix と let が同スコープで共存できる
+    let g_mut: i32 = 10;
+    g_mut = g_i32 + 1;
+    println("let+fix={}", g_mut);     // 100
+
     println("=== OK ===");
     return 0;
 }
