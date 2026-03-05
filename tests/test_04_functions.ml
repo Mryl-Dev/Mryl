@@ -1,105 +1,191 @@
-// ============================================================
-// Test 04: Functions / Lambdas / Generics
+﻿// ============================================================
+// Test 04: 関節
+//   A. 基本関数 / B. 再帰 / C. ラムダ式 / D. ジェネリック
+//   E. void 関数 / F. 関数ネスト呼び出し
+//
+// カバレッジ観点:
+//   C0 : A〜F 全関数ラムダが実行される
+//   C1 :
+//     B: 再帰の基底ケース(n<=1  true) と 再帰ケース(n>1  false) 両方
+//     C: lambda の式ボディ / ブロック-void / ブロック-return の 3 種を呼び出す
+//     F: ネスト呼び出しで各段が実行される
+//   MC/DC:
+//     B: fact(n<=1) で n=1  基底(true), n=2  再帰(false) が単独で結果を決定
+//     B: fib(n<=1)  で n=0,n=1  基底 / n=3  再帰
+//   備考:
+//     A,D,E は分岐なし  C0 相当のみ
+//     D ジェネリック: 同一関数を型違いで呼び出すことで単相化パス確認
 // ============================================================
 
-// --- Basic Functions ---
+// ----------------------------------------------------------
+// A. 基本関数
+// ----------------------------------------------------------
 fn add(a: i32, b: i32) -> i32 {
     return a + b;
 }
 
-fn multiply(a: i32, b: i32) -> i32 {
+fn mul(a: i32, b: i32) -> i32 {
     return a * b;
 }
 
-fn greet(name: string) -> void {
-    println("Hello, {}!", name);
+fn negate(v: i32) -> i32 {
+    return 0 - v;
 }
 
-fn max(a: i32, b: i32) -> i32 {
-    if (a > b) {
-        return a;
-    }
-    return b;
-}
-
-// --- Recursive Functions ---
-fn factorial(n: i32) -> i32 {
+// ----------------------------------------------------------
+// B. 再帰関数
+// ----------------------------------------------------------
+// 階乗: fact(0)=1, fact(1)=1, fact(n)=n*fact(n-1)
+fn fact(n: i32) -> i32 {
     if (n <= 1) {
-        return 1;
+        return 1;           // C1/MC/DC: 基底ケース
     }
-    return n * factorial(n - 1);
+    return n * fact(n - 1); // C1/MC/DC: 再帰ケース
 }
 
+// フィボナッチ: fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2)
 fn fib(n: i32) -> i32 {
-    if (n <= 1) {
-        return n;
+    if (n <= 0) {
+        return 0;
+    }
+    if (n == 1) {
+        return 1;
     }
     return fib(n - 1) + fib(n - 2);
 }
 
-// --- Generic Functions ---
-fn identity<T>(value: T) -> T {
-    return value;
+// ----------------------------------------------------------
+// D. ジェネリック関数
+// ----------------------------------------------------------
+fn identity<T>(x: T) -> T {
+    return x;
 }
 
 fn generic_add<T>(a: T, b: T) -> T {
     return a + b;
 }
 
+fn pair_str<T, U>(a: T, b: U) -> string {
+    return to_string(a) + to_string(b);
+}
+
+// ----------------------------------------------------------
+// E. void 関数
+// ----------------------------------------------------------
+fn print_sep() {
+    println("----------");
+}
+
+fn print_sum(a: i32, b: i32) {
+    let s = a + b;
+    println("sum={}", s);
+}
+
+// ----------------------------------------------------------
+// F. ネスト呼び出し用ヘルパー
+// ----------------------------------------------------------
+fn square(n: i32) -> i32 {
+    return mul(n, n);
+}
+
+fn sum_of_squares(a: i32, b: i32) -> i32 {
+    return add(square(a), square(b));
+}
+
+// ----------------------------------------------------------
+// main
+// ----------------------------------------------------------
 fn main() -> i32 {
     println("=== 04: Functions ===");
 
-    // --- Basic Function Calls ---
-    println("--- Basic Functions ---");
-    println("add(5,3)={}", add(5, 3));           // 8
-    println("mul(4,7)={}", multiply(4, 7));       // 28
-    println("max(10,20)={}", max(10, 20));        // 20
-    println("max(30,15)={}", max(30, 15));        // 30
-    greet("Mryl");                                // Hello, Mryl!
+    // ----------------------------------------------------------
+    // A. 基本関数 (C0)
+    // ----------------------------------------------------------
+    println("--- A: Basic ---");
+    println("add(3,4)={}", add(3, 4));       // 7
+    println("mul(3,4)={}", mul(3, 4));       // 12
+    println("negate(5)={}", negate(5));      // -5
+    println("negate(-3)={}", negate(0 - 3)); // 3
 
-    // --- Recursion ---
-    println("--- Recursion ---");
-    println("0!={}", factorial(0));   // 1
-    println("1!={}", factorial(1));   // 1
-    println("5!={}", factorial(5));   // 120
-    println("10!={}", factorial(10)); // 3628800
+    // ----------------------------------------------------------
+    // B. 再帰関数 (C1 + MC/DC)
+    // ----------------------------------------------------------
+    println("--- B: Recursive ---");
+    // MC/DC: fact の基底ケース (n=0,1)
+    println("fact(0)={}", fact(0));          // 1
+    println("fact(1)={}", fact(1));          // 1
+    // MC/DC: fact の再帰ケース
+    println("fact(5)={}", fact(5));          // 120
+    println("fact(6)={}", fact(6));          // 720
 
-    println("fib(0)={}", fib(0));  // 0
-    println("fib(1)={}", fib(1));  // 1
-    println("fib(7)={}", fib(7));  // 13
-    println("fib(10)={}", fib(10)); // 55
+    // MC/DC: fib の基底ケース
+    println("fib(0)={}", fib(0));            // 0
+    println("fib(1)={}", fib(1));            // 1
+    // MC/DC: fib の再帰ケース
+    println("fib(5)={}", fib(5));            // 5
+    println("fib(7)={}", fib(7));            // 13
 
-    // --- Lambdas ---
-    println("--- Lambdas ---");
+    // ----------------------------------------------------------
+    // C. ラムダ式 (C1: 3 種のボディを実行)
+    // ----------------------------------------------------------
+    println("--- C: Lambda ---");
+
+    // 単一式ボディ
     let double = (x: i32) => x * 2;
-    println("double(5)={}", double(5));    // 10
-    println("double(0)={}", double(0));    // 0
+    println("double(5)={}", double(5));      // 10
+    println("double(0)={}", double(0));      // 0
 
-    let add_lambda = (x: i32, y: i32) => x + y;
-    println("add(3,7)={}", add_lambda(3, 7));   // 10
+    // 複数パラメータ単一式
+    let add_l = (x: i32, y: i32) => x + y;
+    println("add_l(3,7)={}", add_l(3, 7));  // 10
 
-    let is_positive = (n: i32) => n > 0;
-    println("is_positive(5)={}", is_positive(5));    // true
-    println("is_positive(-3)={}", is_positive(-3));  // false
+    // ブロックボディ (void: return なし)
+    let show = (x: i32) => {
+        let doubled = x * 2;
+        println("show doubled={}", doubled);
+    };
+    show(4);                                 // show doubled=8
+    show(0);                                 // show doubled=0
 
-    let square = (x: i32) => x * x;
-    let cube   = (x: i32) => x * x * x;
-    println("square(4)={}", square(4));  // 16
-    println("cube(3)={}", cube(3));      // 27
+    // ブロックボディ (return あり)
+    let compute = (x: i32) => {
+        let v = x * x;
+        return v + 1;
+    };
+    println("compute(3)={}", compute(3));    // 10
+    println("compute(0)={}", compute(0));    // 1
 
-    // use lambda inside loop
-    for i in 1..6 {
-        println("{}^2={}", i, square(i));
-    }
-    // 1 4 9 16 25
+    // ----------------------------------------------------------
+    // D. ジェネリック関数 (C0: 複数型で単相化)
+    // ----------------------------------------------------------
+    println("--- D: Generic ---");
+    println("id_i32={}", identity(42));            // 42
 
-    // --- Generics ---
-    println("--- Generics ---");
-    println("identity(42)={}", identity(42));           // 42
-    println("identity(true)={}", identity(true));       // true
+    println("id_f64={}", identity(3.14));       // 3.14
+    println("id_str={}", identity("mryl"));     // mryl
 
-    println("generic_add(10,20)={}", generic_add(10, 20));      // 30
-    println("generic_add(1.5,2.5)={}", generic_add(1.5, 2.5)); // 4.0
+    println("gadd_i32={}", generic_add(3, 4));     // 7
+
+    println("gadd_f64={}", generic_add(1.5, 2.5)); // 4
+
+    println("pair={}", pair_str(10, "px"));     // 10px
+    println("pair={}", pair_str(3.14, 2));      // 3.142
+
+    // ----------------------------------------------------------
+    // E. void 関数 (C0)
+    // ----------------------------------------------------------
+    println("--- E: Void ---");
+    print_sep();                             // ----------
+    print_sum(3, 7);                         // sum=10
+    print_sep();                             // ----------
+
+    // ----------------------------------------------------------
+    // F. 関数ネスト呼び出し (C1: 各段が実行される)
+    // ----------------------------------------------------------
+    println("--- F: Nested calls ---");
+    println("square(4)={}", square(4));                  // 16
+    println("sum_of_sq(3,4)={}", sum_of_squares(3, 4));  // 25
+    println("sum_of_sq(0,5)={}", sum_of_squares(0, 5));  // 25
 
     println("=== OK ===");
     return 0;

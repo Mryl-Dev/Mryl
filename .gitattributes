@@ -1,0 +1,28 @@
+# ============================================================
+# Mryl repository - line ending policy
+# すべてのテキストファイルを CRLF で統一
+# ============================================================
+
+# デフォルト: テキストファイルはすべて CRLF
+* text=auto eol=crlf
+
+# ソースコード
+*.py    text eol=crlf
+*.ml    text eol=crlf
+*.c     text eol=crlf
+*.h     text eol=crlf
+*.md    text eol=crlf
+*.txt   text eol=crlf
+*.json  text eol=crlf
+*.yml   text eol=crlf
+*.yaml  text eol=crlf
+*.toml  text eol=crlf
+*.svg   text eol=crlf
+
+# バイナリ (変換しない)
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.png   binary
+*.jpg   binary
+*.gif   binary

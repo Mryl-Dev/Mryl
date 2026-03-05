@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="800" height="200">
+  <!--
+    Mryl banner - GitHub README header
+    800 x 200 px
+  -->
+  <defs>
+    <!-- 背景グラデーション（左: 深藍 → 右: エメラルド） -->
+    <linearGradient id="bgB" x1="0" y1="0" x2="800" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#0B2240"/>
+      <stop offset="50%"  stop-color="#0E5C5A"/>
+      <stop offset="100%" stop-color="#1A8C6A"/>
+    </linearGradient>
+
+    <!-- 霧グラデーション -->
+    <radialGradient id="mB1" cx="18%" cy="25%" r="30%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#A8DDE8" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#A8DDE8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mB2" cx="55%" cy="15%" r="25%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#B4F0DC" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#B4F0DC" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="mB3" cx="85%" cy="28%" r="22%" gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#C0F5E8" stop-opacity="0.26"/>
+      <stop offset="100%" stop-color="#C0F5E8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- M 芯グラデーション -->
+    <linearGradient id="coreB" x1="52" y1="28" x2="148" y2="172" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#D0FFF0"/>
+      <stop offset="45%"  stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#A8F0DC"/>
+    </linearGradient>
+
+    <!-- M グロー -->
+    <linearGradient id="glowB" x1="52" y1="28" x2="148" y2="172" gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#7EEAD0"/>
+      <stop offset="50%"  stop-color="#B4F5E4"/>
+      <stop offset="100%" stop-color="#6EDCC0"/>
+    </linearGradient>
+
+    <!-- ハローフィルタ -->
+    <filter id="haloB" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+    </filter>
+
+    <!-- テキストグロー -->
+    <filter id="textGlow" x="-20%" y="-40%" width="140%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- 角丸クリップ -->
+    <clipPath id="clipB">
+      <rect width="800" height="200" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="800" height="200" rx="28" fill="url(#bgB)"/>
+
+  <g clip-path="url(#clipB)">
+
+    <!-- 霧 -->
+    <rect width="800" height="200" fill="url(#mB1)"/>
+    <rect width="800" height="200" fill="url(#mB2)"/>
+    <rect width="800" height="200" fill="url(#mB3)"/>
+    <ellipse cx="100" cy="50" rx="180" ry="40" fill="#B4EED8" fill-opacity="0.08"/>
+    <ellipse cx="500" cy="30" rx="200" ry="34" fill="#C8F5E8" fill-opacity="0.07"/>
+    <ellipse cx="720" cy="55" rx="160" ry="30" fill="#A8DDE0" fill-opacity="0.07"/>
+
+    <!-- 小川 波（下部） -->
+    <path d="M-10 162 Q50 150 100 162 Q150 174 200 162 Q250 150 300 162 Q350 174 400 162 Q450 150 500 162 Q550 174 600 162 Q650 150 700 162 Q750 174 810 162 L810 200 L-10 200 Z"
+          fill="#1A7A5E" fill-opacity="0.30"/>
+    <path d="M-10 175 Q50 164 100 175 Q150 186 200 175 Q250 164 300 175 Q350 186 400 175 Q450 164 500 175 Q550 186 600 175 Q650 164 700 175 Q750 186 810 175 L810 200 L-10 200 Z"
+          fill="#2EAC80" fill-opacity="0.36"/>
+
+    <!-- さざ波 -->
+    <path d="M20 178 Q80 173 140 178 Q200 183 260 178 Q320 173 400 178 Q480 183 540 178 Q600 173 680 178 Q740 183 790 178"
+          stroke="#A8F0D8" stroke-width="1.0" stroke-opacity="0.24" fill="none" stroke-linecap="round"/>
+
+    <!-- ━━━━━━━━━━━━━━━━━━━━━━━━
+         左側: 円形アイコン（縮小版）
+    ━━━━━━━━━━━━━━━━━━━━━━━━ -->
+    <circle cx="100" cy="100" r="72" fill="#0D2A4A" fill-opacity="0.50"/>
+    <circle cx="100" cy="100" r="72" stroke="#D4A054" stroke-width="6" fill="none"
+            stroke-dasharray="24 16" stroke-linecap="square"
+            opacity="0.55" transform="rotate(-4 100 100)"/>
+    <circle cx="100" cy="100" r="67" stroke="#C8943A" stroke-width="0.8" fill="none" opacity="0.24"/>
+
+    <!-- M (アイコン内 小) -->
+    <path d="M 60 142 L 60 58 L 100 96 L 140 58 L 140 142"
+          stroke="url(#glowB)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" filter="url(#haloB)" opacity="0.28"/>
+    <path d="M 60 142 L 60 58 L 100 96 L 140 58 L 140 142"
+          stroke="white" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.44"/>
+    <path d="M 60 142 L 60 58 L 100 96 L 140 58 L 140 142"
+          stroke="url(#coreB)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="1.0"/>
+
+    <!-- C/C++ < > (アイコン内) -->
+    <path d="M 30 116 L 18 126 L 30 136"
+          stroke="white" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.30"/>
+    <path d="M 170 116 L 182 126 L 170 136"
+          stroke="white" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round"
+          fill="none" opacity="0.30"/>
+
+    <!-- ━━━━━━━━━━━━━━━━━━━━━━━━
+         右側: テキストエリア
+    ━━━━━━━━━━━━━━━━━━━━━━━━ -->
+
+    <!-- 言語名 "Mryl" -->
+    <text x="208" y="92"
+          font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+          font-size="68" font-weight="700" letter-spacing="-1"
+          fill="white" fill-opacity="0.96"
+          filter="url(#textGlow)">Mryl</text>
+
+    <!-- バージョン -->
+    <text x="213" y="126"
+          font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+          font-size="18" font-weight="400" letter-spacing="1.5"
+          fill="#A8F0D8" fill-opacity="0.82">v 0 . 2 . 0</text>
+
+    <!-- キャッチフレーズ -->
+    <text x="213" y="158"
+          font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+          font-size="15" font-weight="300" letter-spacing="0.5"
+          fill="white" fill-opacity="0.46">A small, full-fledged programming language</text>
+
+    <!-- 区切り縦線 -->
+    <line x1="192" y1="36" x2="192" y2="164"
+          stroke="white" stroke-width="0.8" stroke-opacity="0.18"/>
+
+  </g>
+</svg>

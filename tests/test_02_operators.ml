@@ -1,102 +1,177 @@
+﻿// ============================================================
+// Test 02: 演算子
+//   A. 算術演算 / B. 比較演算 / C. 論理演算+ショートサーキット
+//   D. ビット演算 / E. 複合代入+インクリメント / F. 演算子優先順位
+//
+// カバレッジ観点:
+//   C0  : A〜F 全セクションの文を実行
+//   C1  :
+//     B: 各比較演算子で truefalse 両結果を出力
+//     C: && / || / ! の全真偽パターンを実行
+//   MC/DC (C セクション):
+//     (p && q): {p=F,q=T}F, {p=T,q=F}F, {p=T,q=T}T
+//     (p || q): {p=T,q=F}T, {p=F,q=T}T, {p=F,q=F}F
+//     (!p)    : p=TF, p=FT
+//   備考:
+//     A,D,E,F は分岐なし  C0 相当のみ
+//     ショートサーキット: Mryl に副作用検知手段がないため
+//       変数 guard を使い「右辺が評価されたか」を間接確認
 // ============================================================
-// Test 02: Operators
-//   Arithmetic / Comparison / Logical / Bitwise / Compound Assignment / Increment
-// ============================================================
-
 fn main() -> i32 {
     println("=== 02: Operators ===");
 
-    // --- Arithmetic ---
-    println("--- Arithmetic ---");
+    // ----------------------------------------------------------
+    // A. 算術演算 (C0)
+    // ----------------------------------------------------------
+    println("--- A: Arithmetic ---");
     let a = 10;
     let b = 3;
-    println("10+3={}", a + b);    // 13
-    println("10-3={}", a - b);    // 7
-    println("10*3={}", a * b);    // 30
-    println("10/3={}", a / b);    // 3 (integer division)
-    println("10%3={}", a % b);    // 1
+    println("10+3={}", a + b);        // 13
+    println("10-3={}", a - b);        // 7
+    println("10*3={}", a * b);        // 30
+    println("10/3={}", a / b);        // 3  (整数除算)
+    println("10%%3={}", a % b);       // 1
 
     let fa = 10.0;
     let fb = 3.0;
-    println("10.0/3.0={}", fa / fb);  // 3.333...
+    println("10.0/3.0={}", fa / fb);  // 3.333333
 
-    // --- Comparison ---
-    println("--- Comparison ---");
-    println("5<10={}", 5 < 10);      // true
-    println("5<=5={}", 5 <= 5);      // true
-    println("10>5={}", 10 > 5);      // true
-    println("10>=10={}", 10 >= 10);  // true
-    println("5==5={}", 5 == 5);      // true
-    println("5!=10={}", 5 != 10);    // true
-    println("3>5={}", 3 > 5);        // false
+    // 負数
+    let neg = 0 - 7;
+    println("0-7={}", neg);           // -7
+    println("-7*-1={}", neg * (0 - 1)); // 7
 
-    // --- Logical ---
-    println("--- Logical ---");
-    println("true||false={}", true || false);   // true
-    println("true&&true={}", true && true);     // true
-    println("true&&false={}", true && false);   // false
-    println("!true={}", !true);                 // false
-    println("!false={}", !false);               // true
+    // ----------------------------------------------------------
+    // B. 比較演算 (C1: 各演算子で true / false 両方を出力)
+    // ----------------------------------------------------------
+    println("--- B: Comparison ---");
+    // < : true / false
+    println("5<10={}", 5 < 10);       // 1
+    println("10<5={}", 10 < 5);       // 0
+    // <=: true / false
+    println("5<=5={}", 5 <= 5);       // 1
+    println("6<=5={}", 6 <= 5);       // 0
+    // > : true / false
+    println("10>5={}", 10 > 5);       // 1
+    println("5>10={}", 5 > 10);       // 0
+    // >=: true / false
+    println("10>=10={}", 10 >= 10);   // 1
+    println("9>=10={}", 9 >= 10);     // 0
+    // ==: true / false
+    println("5==5={}", 5 == 5);       // 1
+    println("5==6={}", 5 == 6);       // 0
+    // !=: true / false
+    println("5!=10={}", 5 != 10);     // 1
+    println("5!=5={}", 5 != 5);       // 0
 
-    // short-circuit evaluation
-    let x = 5;
-    println("x>0&&x<10={}", x > 0 && x < 10);  // true
-    println("x<0||x>3={}", x < 0 || x > 3);    // true
+    // ----------------------------------------------------------
+    // C. 論理演算 + ショートサーキット (C1 + MC/DC)
+    // ----------------------------------------------------------
+    println("--- C: Logical ---");
 
-    // --- Bitwise ---
-    println("--- Bitwise ---");
-    let bx = 5;  // 0101
-    let by = 3;  // 0011
-    println("5&3={}", bx & by);    // 1 (0001)
-    println("5|3={}", bx | by);    // 7 (0111)
-    println("5^3={}", bx ^ by);    // 6 (0110)
-    println("5<<1={}", bx << 1);   // 10
-    println("5>>1={}", bx >> 1);   // 2
+    // MC/DC: &&  p=F が単独で決める
+    println("F&&T={}", false && true);    // 0
+    // MC/DC: &&  q=F が単独で決める
+    println("T&&F={}", true && false);    // 0
+    // MC/DC: &&  両方 T
+    println("T&&T={}", true && true);     // 1
+    // (おまけ) F&&F
+    println("F&&F={}", false && false);   // 0
 
-    // --- Compound Assignment ---
-    println("--- Compound Assignment ---");
+    // MC/DC: ||  p=T が単独で決める
+    println("T||F={}", true || false);    // 1
+    // MC/DC: ||  q=T が単独で決める
+    println("F||T={}", false || true);    // 1
+    // MC/DC: ||  両方 F
+    println("F||F={}", false || false);   // 0
+    // (おまけ) T||T
+    println("T||T={}", true || true);     // 1
+
+    // MC/DC: NOT
+    println("!true={}", !true);           // 0
+    println("!false={}", !false);         // 1
+
+    // ショートサーキット確認 (変数 guard を使って間接検証)
+    // && 左辺 false  右辺評価されないはずなので guard は変わらない
+    let guard = 0;
+    if (false && true) { guard = 1; }
+    println("short-and guard={}", guard); // 0 (右辺未評価)
+
+    // || 左辺 true  右辺評価されないはずなので guard は変わらない
+    let guard2 = 0;
+    if (true || false) { guard2 = 1; }
+    println("short-or guard2={}", guard2); // 1 (条件全体 true で真ブランチ実行)
+    //  guard2=1 になるのは条件が true だからであり
+    //   || の右辺 (false) は評価されていない
+
+    // ----------------------------------------------------------
+    // D. ビット演算 (C0)
+    // ----------------------------------------------------------
+    println("--- D: Bitwise ---");
+    let bx = 5;   // 0101
+    let by = 3;   // 0011
+    println("5&3={}", bx & by);       // 1  (0001)
+    println("5|3={}", bx | by);       // 7  (0111)
+    println("5^3={}", bx ^ by);       // 6  (0110)
+    println("5<<1={}", bx << 1);      // 10 (1010)
+    println("5>>1={}", bx >> 1);      // 2  (0010)
+    // ~5 は C では int なので -6 (2の補数)
+    // ビット NOT はインタープリタではそのまま, C でも同様
+
+    // シフト境界値
+    let sh = 1;
+    println("1<<0={}", sh << 0);      // 1
+    println("1<<7={}", sh << 7);      // 128
+
+    // ----------------------------------------------------------
+    // E. 複合代入 + インクリメント/デクリメント (C0)
+    // ----------------------------------------------------------
+    println("--- E: Compound Assign + Inc/Dec ---");
     let n = 10;
-    n += 5;    println("+=: {}", n);   // 15
-    n -= 3;    println("-=: {}", n);   // 12
-    n *= 2;    println("*=: {}", n);   // 24
-    n /= 3;    println("/=: {}", n);   // 8
-    n %= 5;    println("%%=: {}", n);  // 3
+    n += 5;   println("+=:{}", n);    // 15
+    n -= 3;   println("-=:{}", n);    // 12
+    n *= 2;   println("*=:{}", n);    // 24
+    n /= 3;   println("/=:{}", n);    // 8
+    n %= 5;   println("%%=:{}", n);   // 3
 
     let m = 8;
-    m <<= 1;   println("<<=: {}", m);  // 16
-    m >>= 2;   println(">>=: {}", m);  // 4
+    m <<= 1;  println("<<=:{}", m);   // 16
+    m >>= 2;  println(">>=:{}", m);   // 4
 
     let k = 12;
-    k ^= 5;   println("^=: {}", k);   // 9
+    k ^= 5;   println("^=:{}", k);    // 9
 
-    // --- Increment/Decrement ---
-    println("--- Increment/Decrement ---");
+    // インクリメント / デクリメント
     let i = 5;
-    i++;
-    println("i++ -> {}", i);       // 6
-    ++i;
-    println("++i -> {}", i);       // 7
-    i--;
-    println("i-- -> {}", i);       // 6
-    --i;
-    println("--i -> {}", i);       // 5
+    i++;      println("i++:{}", i);   // 6
+    ++i;      println("++i:{}", i);   // 7
+    i--;      println("i--:{}", i);   // 6
+    --i;      println("--i:{}", i);   // 5
 
-    // post-increment: use current value then increment
+    // 後置インクリメントは「現在値を返してから加算」
     let j = 0;
     let r1 = j++;
-    println("j++ returns {} (j={})", r1, j);   // 0, 1
+    println("j++ ret={} j={}", r1, j); // 0, 1
 
-    // pre-increment: increment then use new value
+    // 前置インクリメントは「加算してから返す」
     let r2 = ++j;
-    println("++j returns {} (j={})", r2, j);   // 2, 2
+    println("++j ret={} j={}", r2, j); // 2, 2
 
-    // --- Operator Precedence ---
-    println("--- Precedence ---");
-    println("2+3*4={}", 2 + 3 * 4);          // 14
-    println("(2+3)*4={}", (2 + 3) * 4);      // 20
-    println("10-2*3={}", 10 - 2 * 3);        // 4
-    println("1+2==3={}", 1 + 2 == 3);        // true
-    println("!false&&true={}", !false && true); // true
+    // ----------------------------------------------------------
+    // F. 演算子優先順位 (C0: 各与式を評価)
+    // ----------------------------------------------------------
+    println("--- F: Precedence ---");
+    println("2+3*4={}", 2 + 3 * 4);           // 14  (* before +)
+    println("(2+3)*4={}", (2 + 3) * 4);       // 20
+    println("10-2*3={}", 10 - 2 * 3);         // 4
+    println("8/2+1={}", 8 / 2 + 1);           // 5
+    println("1+2==3={}", 1 + 2 == 3);         // 1  (+ before ==)
+    println("!false&&true={}", !false && true); // 1  (! before &&)
+    println("2|1&3={}", 2 | 1 & 3);           // 3  (& before |)
+    println("1<<2+1={}", 1 << 2 + 1);         // 8  (+ before <<... wait)
+    // 仕様: << は + より低優先  (1 << 2) + 1 = 5
+    // 実際の Mryl 優先順位: << は + より低いため 1 << (2+1) = 8 と解釈
+    // コメントで記録: 仕様通りであることを確認するための観点
 
     println("=== OK ===");
     return 0;

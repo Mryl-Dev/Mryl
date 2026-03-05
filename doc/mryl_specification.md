@@ -1,7 +1,7 @@
 ﻿# Mryl プログラミング言語 - 完全仕様書
 
-**バージョン**: 0.1.0 
-**最終更新**: 2026年2月21日
+**バージョン**: 0.2.0 
+**最終更新**: 2026年3月5日
 
 ---
 
@@ -20,9 +20,10 @@
 11. [async / await](#async--await)
 12. [制御フロー](#制御フロー)
 13. [メモリ管理](#メモリ管理)
-14. [コンパイルパイプライン](#コンパイルパイプライン)
-15. [AST構造](#ast構造)
-16. [拡張ガイド](#拡張ガイド)
+14. [入力関数](#入力関数)
+15. [コンパイルパイプライン](#コンパイルパイプライン)
+16. [AST構造](#ast構造)
+17. [拡張ガイド](#拡張ガイド)
 
 ---
 
@@ -36,7 +37,12 @@
 - **構造体とメソッド**: オブジェクト指向プログラミングのサポート
 - **メモリ安全性**: 自動メモリ管理（malloc/free の自動化）
 - **完全な演算子セット**: 論理、ビット、複合代入演算子を完全サポート
-- **ラムダ式**: `(x, y) => x + y` の無名関数
+- **ラムダ式**: `(x, y) => x + y` の無名関数（async ラムダ含む）
+- **fn 型パラメータ**: 関数をコールバックとして渡せる高階関数
+- **fix キーワード**: 不変変数・不変関数パラメータの宣言
+- **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
+- **string 損作**: 連結（`+`）・比較（`==` / `!=`）
+- **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`
 - **async / await**: 状態機械 + シングルスレッドスケジューラによる非同期処理
 
 ### コンパイルパイプライン
@@ -69,9 +75,26 @@ Mryl/
 │   ├── Lexer.py              # トークン化（FAT_ARROW, ASYNC, AWAIT 対応）
 │   ├── Parser.py             # AST 構築（ラムダ, async fn, await）
 │   ├── Ast.py                # AST ノード定義（Lambda, AwaitExpr, is_async）
-│   ├── TypeChecker.py        # 型チェック（fn型, Future<T>型）
+│   ├── TypeChecker/          # 型チェックパッケージ（Mixin 分割）
+│   │   ├── __init__.py       #   TypeChecker メインクラス（4 Mixin 多重継承）
+│   │   ├── _stmt.py          #   文の型チェック
+│   │   ├── _expr.py          #   式の型チェック
+│   │   ├── _call.py          #   関数呼び出しの型チェック
+│   │   └── _util.py          #   型比較・型昇格ユーティリティ
 │   ├── Interpreter.py        # Python インタプリタ（クロージャ, asyncio）
-│   ├── CodeGenerator.py      # C コード生成（関数ポインタ, 状態機械, MrylTask）
+│   ├── CodeGenerator/        # C コード生成パッケージ（Mixin 分割）
+│   │   ├── __init__.py       #   CodeGenerator メインクラス（10 Mixin 多重継承）
+│   │   ├── _proto.py         #   Protocol 基底クラス（全属性・メソッドスタブ）
+│   │   ├── _util.py          #   共通ユーティリティ・エスケープ処理
+│   │   ├── _type.py          #   C 型変換・フォーマット指定子
+│   │   ├── _const.py         #   定数生成・定数式評価
+│   │   ├── _struct.py        #   struct/enum 生成
+│   │   ├── _header.py        #   インクルード・組み込み型・ヘルパー生成
+│   │   ├── _stmt.py          #   文生成
+│   │   ├── _expr.py          #   式生成・match 式・メソッド呼び出し
+│   │   ├── _lambda.py        #   ラムダ・クロージャ生成
+│   │   ├── _async.py         #   async/await ステートマシン生成
+│   │   └── _generic.py       #   ジェネリック関数インスタンス化
 │   ├── MrylError.py          # エラー定義
 │   └── Mryl.py               # エントリポイント
 ├── tests/
@@ -89,14 +112,13 @@ Mryl/
 │   ├── test_12_type_check.ml    # 型宣言 / 型推論 / 型チェック / 型昇格
 │   ├── test_13_boundary_numeric.ml  # 数値型境界値（C0・境界値分析）
 │   ├── test_14_branch_coverage.ml   # 条件分岐網羅（C0/C1/MC/DC）
-│   └── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
+│   ├── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
+│   └── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
 ├── my/
-│   ├── print.ml            # print/println デモ
-│   ├── for_loops.ml        # for ループ各種
-│   ├── generic_simple.ml   # ジェネリック関数デモ
-│   ├── generic.ml          # フル機能ジェネリック
-│   ├── struct_methods.ml   # 構造体とメソッド
-│   └── advanced_methods.ml # 高度な機能サンプル
+│   ├── test_async_lambda.ml          # async ラムダ式（基本）動作確認用
+│   ├── test_async_lambda_await.ml    # async ラムダ式（await 内包）動作確認用
+│   ├── test_lambda_block.ml          # ラムダ式ブロックボディ動作確認用
+│   └── test_lambda_block_return.ml   # ラムダ式ブロックボディ return 動作確認用
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
 │   └── Mryl.exe              # コンパイル済みバイナリ
@@ -131,16 +153,30 @@ Mryl/
 | const 参照 | 関数内で const を変数として参照可能 |
 | C コード生成 | `#define NAME value` で生成 |
 
-### 3.3 ラムダ式
+### 3.3 fix キーワード（不変変数・不変引数）
 
 | 機能 | 説明 |
 |------|------|
-| `(パラメータ) => 式` | ラムダ式の定義 |
+| `fix x: T = expr` | 不変変数の宣言 |
+| `fix x = expr` | 不変変数（型推論） |
+| `fn f(fix a: T, b: T)` | `a` は不変、`b` は可変の混在引数 |
+| `(fix x: T) => expr` | ラムダの不変パラメータ |
+| 変量への再代入 | 型チェッカー時に `TypeError` |
+
+### 3.4 ラムダ式
+
+| 機能 | 説明 |
+|------|------|
+| `(パラメータ) => 式` | 単一式ボディのラムダ式 |
+| `(パラメータ) => { 文; ... }` | 複数ステートメントを持つブロックボディのラムダ式 |
+| `async (パラメータ) => { 文; ... }` | async ラムダ式（`MrylTask*` を返す） |
 | 型注釈対応 | パラメータに `: T` で型を指定可能 |
 | `fn` 型 | 演算が展開する内部型 (`fn(i32)->i32` 等) |
-| C コード生成 | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
+| ブロックボディの戻り値型 | `return` 文なし → `void`、あり → 式の型を自動推論 |
+| C コード生成（同期） | `static 型 __lambda_N(パラメータ)` + 型付き関数ポインタ |
+| C コード生成（async） | SM 構造体 + `move_next` 関数 + ファクトリ関数として展開 |
 
-### 3.4 async / await
+### 3.5 async / await
 
 | 機能 | 説明 |
 |------|------|
@@ -151,7 +187,7 @@ Mryl/
 | `Future<T>` | 非同期タスクの型。C コードでは `MrylTask*` |
 | C コード生成 | SM 構造体 + `move_next` 関数 + ファクトリ関数 + スケジューラ |
 
-### 3.5 条件付きコンパイル
+### 3.6 条件付きコンパイル
 
 | ディレクティブ | 説明 | 例 |
 |----------|------|-----|
@@ -166,7 +202,7 @@ Mryl/
 - Parser で ConditionalBlock AST 構築
 - CodeGenerator で条件評価 → 該当ブロックのみコンパイル
 
-### 3.6 数値型型昇格システム
+### 3.7 数値型型昇格システム
 
 二項演算で型が異なる場合、自動的に上位の型に昇格：
 
@@ -178,6 +214,34 @@ Mryl/
 - 整数 + 浮動小数点 → 浮動小数点 (f64)
 - 例: i32 + f32 → f64, u16 + u64 → u64
 ```
+
+### 3.8 fn 型パラメータ（高階関数・コールバック）
+
+| 機能 | 説明 |
+|------|------|
+| `fn f(cb: fn(i32) -> i32, x: i32) -> i32` | 関数型パラメータの定義 |
+| `fn f(cb: fn(i32, i32) -> i32, ...)` | 複数パラメータの関数型 |
+| `fn f(cb: fn(i32) -> void, ...)` | void 戻り値の関数型 |
+| ラムダ変数を渡す | `apply(double, 5)` — ラムダをコールバックとして渡す |
+| 名前付き関数を渡す | `apply(my_func, 5)` — 定義済み関数を渡す |
+| C コード生成 | `型 (*cb)(パラメータ)` の関数ポインタ型 |
+
+### 3.9 前方宣言
+
+| 機能 | 説明 |
+|------|------|
+| `fn name(params) -> T;` | 関数の前方宣言（ボディなし） |
+| 相互再帰 | `is_even` / `is_odd` のように互いを呼び合う関数の記述 |
+| C コード生成 | 関数定義の前にプロトタイプ宣言を出力 |
+
+### 3.10 string 操作
+
+| 機能 | 説明 |
+|------|------|
+| `a + b` | string 連結（`mryl_string_concat` で展開） |
+| `a == b` | string 比較（`strcmp` で展開） |
+| `a != b` | string 非等比較 |
+| 関数引数・戻り値 | `string` 型の受け渡し・返却 |
 
 ---
 
@@ -539,24 +603,49 @@ let x = pair.get_first();  // → Pair_T_get_first(pair)
 ### 基本構文
 
 ```mryl
+// 単一式ボディ
 let f = (パラメータ: 型) => 式;
+
+// ブロックボディ（複数ステートメント）
+let g = (パラメータ: 型) => {
+    文;
+    文;
+};
 ```
 
 ### 使用例
 
 ```mryl
 fn main() {
-    // 単一パラメータ
+    // 単一パラメータ（単一式ボディ）
     let mul2 = (x: i32) => x * 2;
     let r1 = mul2(5);              // 10
 
-    // 複数パラメータ
+    // 複数パラメータ（単一式ボディ）
     let add = (x: i32, y: i32) => x + y;
     let r2 = add(3, 7);            // 10
 
     // 比較式
     let is_positive = (n: i32) => n > 0;
     let r3 = is_positive(5);       // true (1)
+
+    // ブロックボディ（複数ステートメント、戻り値 void）
+    let process = (x: i32) => {
+        let doubled = x * 2;
+        let result  = doubled * 2;
+        println(result);
+    };
+    process(3);                    // 12
+    process(5);                    // 20
+
+    // ブロックボディ（return 文あり、戻り値型を自動推論）
+    let compute = (x: i32) => {
+        let doubled = x * 2;
+        let result  = doubled + 10;
+        return result;
+    };
+    let r1 = compute(3);           // 16
+    let r2 = compute(5);           // 20
 }
 ```
 
@@ -564,8 +653,11 @@ fn main() {
 
 - ラムダ変数の型は内部的に `fn` 型として扱われる
 - TypeChecker が引数・戻り値の型を推論し `fn(i32, i32) -> i32` 形式で保持
+- ブロックボディの場合、`return` 文をスキャンして戻り値型を自動推論する（`return` なしは `void`）
 
 ### C コード生成
+
+**単一式ボディ**
 
 ```c
 // ラムダ → static 関数 + 型付き関数ポインタ
@@ -579,11 +671,110 @@ int main(void) {
 }
 ```
 
+**ブロックボディ — void（`return` なし）**
+
+```c
+static void __lambda_0(int32_t x) {
+    int32_t doubled = (x * 2);
+    int32_t result = (doubled * 2);
+    printf("%d\n", result);
+}
+
+int main(void) {
+    void (*process)(int32_t) = __lambda_0;
+    process(3);   // 12
+    process(5);   // 20
+}
+```
+
+**ブロックボディ — 戻り値あり（`return` 文から型を自動推論）**
+
+```c
+static int32_t __lambda_1(int32_t x) {
+    int32_t doubled = (x * 2);
+    int32_t result = (doubled + 10);
+    return result;
+}
+
+int main(void) {
+    int32_t (*compute)(int32_t) = __lambda_1;
+    int32_t r1 = compute(3);   // 16
+    int32_t r2 = compute(5);   // 20
+}
+```
+
 **static 関数の挿入位置**: 最初の関数定義の直前
 
 ### Python インタプリタでの動作
 
 クロージャとして実装 — 宣言時点の環境をキャプチャした辞書 `{'__lambda__': True, 'params', 'body', 'captured_env'}` として保存。
+
+### async ラムダ式
+
+`async` キーワードを付けて宣言する非同期ラムダ式です。
+
+**構文**：
+
+```mryl
+let 変数名 = async (パラメータ: 型) => {
+    // 非同期ボディ（await を内包可能）
+};
+await 変数名(引数);
+```
+
+**使用例**（ボディ内 await なし）：
+
+```mryl
+fn main() {
+    let greet = async (x: i32) => {
+        println(x);
+    };
+    await greet(42);       // 42
+}
+```
+
+**使用例**（ボディ内 await あり）：
+
+```mryl
+async fn double(n: i32) -> i32 {
+    return n * 2;
+}
+
+fn main() {
+    let compute = async (x: i32) => {
+        let result = await double(x);
+        println(result);
+    };
+    await compute(5);      // 10
+}
+```
+
+**C コード生成**：
+
+async ラムダは `async fn` と同様にステートマシン（SM）として展開されます：
+
+```c
+// ===== Async Lambda state machines =====
+typedef struct { int state; int32_t x; } __lambda_0_sm_t;
+static int __lambda_0_move_next(__lambda_0_sm_t* sm, MrylTask* task) { ... }
+static MrylTask* __lambda_0_factory(int32_t x) { ... }
+
+int main(void) {
+    MrylTask* (*greet)(int32_t) = __lambda_0_factory;
+    MrylTask* __h0 = greet(42);
+    mryl_scheduler_run();
+}
+```
+
+**特徴**：
+
+| 項目 | 内容 |
+|------|------|
+| 戻り値型 | `MrylTask*` |
+| 呼び出し方法 | `await 変数(引数)` で待機・実行 |
+| ボディ内 await | `await` を使用して他の async 関数/ラムダを待機可能 |
+| 制限 | ブロックボディ `{ }` のみサポート（単一式ボディ不可） |
+| Python モード | `asyncio.create_task()` でコルーチンとして実行 |
 
 ---
 
@@ -933,6 +1124,37 @@ fn test() {
 2. 一時変数 `__temp_str_0, __temp_str_1, ...` を生成
 3. `local_string_vars` に追加して追跡
 4. 関数終了時に `free_mryl_string()` を自動生成
+
+---
+
+## 入力関数
+
+### read_line
+
+標準入力から 1 行読み取り、末尾の改行を除去して `string` として返します。
+
+```mryl
+let line: string = read_line();
+println("got={}", line);
+```
+
+### parse_int
+
+`string` を `i32` に変換します。変換失敗時は `ParseError` でパニックします。
+
+```mryl
+let n: i32 = parse_int(read_line());
+println("n+1={}", n + 1);
+```
+
+### parse_f64
+
+`string` を `f64` に変換します。変換失敗時は `ParseError` でパニックします。
+
+```mryl
+let f: f64 = parse_f64(read_line());
+println("f*2={}", f * 2.0);
+```
 
 ---
 

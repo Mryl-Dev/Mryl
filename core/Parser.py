@@ -145,11 +145,22 @@ class Parser:
         return EnumDecl(name, variants, line, col)
 
     def parse_impl_decl(self, structs):
-        """Parse impl StructName { fn method(...) { ... } }"""
+        """Parse impl StructName { fn method(...) { ... } }
+        Also handles generic syntax: impl Box<T> { ... }
+        """
         self.expect(TokenKind.IMPL)
 
         struct_name = self.current.value
         self.expect(TokenKind.IDENT)
+
+        # ジェネリック型引数 <T, U, ...> をスキップ (impl Box<T> など) (#32)
+        if self.current.kind == TokenKind.LT:
+            self.advance()  # consume <
+            while self.current.kind != TokenKind.GT:
+                self.expect(TokenKind.IDENT)  # type param name
+                if self.current.kind == TokenKind.COMMA:
+                    self.advance()
+            self.expect(TokenKind.GT)  # consume >
 
         if struct_name not in structs:
             raise SyntaxError_(f"Struct {struct_name} not found", self.current)
@@ -229,6 +240,18 @@ class Parser:
         if self.match(TokenKind.ARROW):
             return_type = self.parse_type()
 
+        # 前方宣言: fn name(...) -> T;  (ボディなし)
+        if self.match(TokenKind.SEMICOLON):
+            return FunctionDecl(
+                name=name,
+                params=params,
+                return_type=return_type,
+                body=None,
+                type_params=type_params,
+                line=line,
+                column=col,
+            )
+
         body = self.parse_block()
         return FunctionDecl(
             name=name, 
@@ -286,6 +309,12 @@ class Parser:
         return params
 
     def parse_param(self):
+        # fix 修飾子のチェック: fn foo(fix x: i32)
+        is_fix = False
+        if self.current.kind == TokenKind.FIX:
+            is_fix = True
+            self.advance()  # consume fix
+
         tok = self.current
         name = tok.value
         line, col = tok.line, tok.column
@@ -294,12 +323,30 @@ class Parser:
         self.expect(TokenKind.COLON)
         type_node = self.parse_type()
 
-        return Param(name, type_node, line, col)
+        return Param(name, type_node, line, col, is_fix=is_fix)
 
     # ============================================================
     # Type parsing
     # ============================================================
     def parse_type(self):
+        # fn(T, U) -> V  /  async fn(T) -> V  (#41)
+        if self.current.kind in (TokenKind.FN, TokenKind.ASYNC):
+            is_async = self.current.kind == TokenKind.ASYNC
+            if is_async:
+                self.advance()  # consume async
+            self.advance()  # consume fn
+            self.expect(TokenKind.LPAREN)
+            param_types = []
+            while self.current.kind != TokenKind.RPAREN:
+                param_types.append(self.parse_type())
+                if self.current.kind == TokenKind.COMMA:
+                    self.advance()
+            self.expect(TokenKind.RPAREN)
+            self.expect(TokenKind.ARROW)
+            ret_type = self.parse_type()
+            type_name = "async_fn" if is_async else "fn"
+            return TypeNode(type_name, type_args=param_types + [ret_type])
+
         tok = self.current
         name = tok.value
         line, col = tok.line, tok.column
@@ -337,6 +384,9 @@ class Parser:
 
         if tok == TokenKind.LET:
             return self.parse_let_decl()
+
+        if tok == TokenKind.FIX:
+            return self.parse_fix_decl()
 
         if tok == TokenKind.IF:
             return self.parse_if_stmt()
@@ -389,6 +439,28 @@ class Parser:
 
         self.expect(TokenKind.SEMICOLON)
         return LetDecl(name, type_node, init_expr, line, col)
+
+    def parse_fix_decl(self):
+        """Parse: fix name: Type = expr;"""
+        tok = self.current
+        self.expect(TokenKind.FIX)
+
+        name = self.current.value
+        line, col = self.current.line, self.current.column
+        self.expect(TokenKind.IDENT)
+
+        type_node = None
+        if self.match(TokenKind.COLON):
+            type_node = self.parse_type()
+
+        init_expr = None
+        if self.match(TokenKind.EQ):
+            init_expr = self.parse_expr()
+        else:
+            raise SyntaxError_(f"'fix' declaration '{name}' must have an initializer", self.current)
+
+        self.expect(TokenKind.SEMICOLON)
+        return FixDecl(name, type_node, init_expr, line, col)
 
     def parse_const_decl(self):
         tok = self.current
@@ -698,15 +770,37 @@ class Parser:
         )
 
     def parse_update_expr(self):
-        """Parse update expression (can be assignment like i = i + 1)"""
+        """Parse update expression (can be assignment like i = i + 1, or compound like i += 1)"""
         expr = self.parse_expr()
-        
-        # Check for assignment
+
+        line = expr.line if hasattr(expr, 'line') else None
+        col  = expr.column if hasattr(expr, 'column') else None
+
+        # Simple assignment
         if self.current.kind == TokenKind.EQ:
             self.advance()
             value = self.parse_expr()
-            return Assignment(expr, value, expr.line if hasattr(expr, 'line') else None, expr.column if hasattr(expr, 'column') else None)
-        
+            return Assignment(expr, value, line, col)
+
+        # Compound assignment operators (+=, -=, *=, /=, %=, <<=, >>=, ^=)
+        compound_ops = {
+            TokenKind.PLUS_EQ:   "+=",
+            TokenKind.MINUS_EQ:  "-=",
+            TokenKind.STAR_EQ:   "*=",
+            TokenKind.SLASH_EQ:  "/=",
+            TokenKind.MOD_EQ:    "%=",
+            TokenKind.LSHIFT_EQ: "<<=",
+            TokenKind.RSHIFT_EQ: ">>=",
+            TokenKind.CARET_EQ:  "^=",
+        }
+        for token_kind, op_str in compound_ops.items():
+            if self.current.kind == token_kind:
+                self.advance()
+                value    = self.parse_expr()
+                base_op  = op_str[:-1]  # Remove trailing '='
+                bin_expr = BinaryOp(base_op, expr, value, line, col)
+                return Assignment(expr, bin_expr, line, col)
+
         return expr
 
     def parse_return_stmt(self):
@@ -1025,6 +1119,15 @@ class Parser:
             expr.column = col
             return expr
 
+        if tok.kind == TokenKind.ASYNC:
+            # async (params) => body  → async lambda
+            next_pos = self.pos + 1
+            if next_pos < len(self.tokens) and self.tokens[next_pos].kind == TokenKind.LPAREN:
+                self.advance()  # consume ASYNC, current is now LPAREN
+                if self._is_lambda_start():
+                    return self.parse_lambda(is_async=True)
+            raise SyntaxError_("Unexpected 'async' outside of async lambda or async fn", tok)
+
         if tok.kind == TokenKind.IDENT:
             return self.parse_ident_primary()
 
@@ -1051,7 +1154,9 @@ class Parser:
                 self.advance()  # )
                 return self.current.kind == TokenKind.FAT_ARROW
 
-            # First param must be an identifier
+            # First param: optional 'fix' modifier, then identifier
+            if self.current.kind == TokenKind.FIX:
+                self.advance()  # consume fix
             if self.current.kind != TokenKind.IDENT:
                 return False
             self.advance()  # param name
@@ -1066,6 +1171,8 @@ class Parser:
             # Additional params
             while self.current.kind == TokenKind.COMMA:
                 self.advance()  # ,
+                if self.current.kind == TokenKind.FIX:
+                    self.advance()  # consume fix
                 if self.current.kind != TokenKind.IDENT:
                     return False
                 self.advance()  # param name
@@ -1084,30 +1191,34 @@ class Parser:
             self.pos = saved_pos
             self.current = self.tokens[saved_pos]
 
-    def parse_lambda(self):
-        """Parse: (params) => expr  or  (params) => { block }"""
+    def parse_lambda(self, is_async: bool = False):
+        """Parse: (params) => expr  or  (params) => { block }  or  async (params) => { block }"""
         tok = self.current
         line, col = tok.line, tok.column
         self.expect(TokenKind.LPAREN)
 
         params = []
         if self.current.kind != TokenKind.RPAREN:
+            p_is_fix = self.current.kind == TokenKind.FIX
+            if p_is_fix: self.advance()
             pname = self.current.value
             pline, pcol = self.current.line, self.current.column
             self.expect(TokenKind.IDENT)
             ptype = None
             if self.match(TokenKind.COLON):
                 ptype = self.parse_type()
-            params.append(Param(pname, ptype, pline, pcol))
+            params.append(Param(pname, ptype, pline, pcol, is_fix=p_is_fix))
 
             while self.match(TokenKind.COMMA):
+                p_is_fix = self.current.kind == TokenKind.FIX
+                if p_is_fix: self.advance()
                 pname = self.current.value
                 pline, pcol = self.current.line, self.current.column
                 self.expect(TokenKind.IDENT)
                 ptype = None
                 if self.match(TokenKind.COLON):
                     ptype = self.parse_type()
-                params.append(Param(pname, ptype, pline, pcol))
+                params.append(Param(pname, ptype, pline, pcol, is_fix=p_is_fix))
 
         self.expect(TokenKind.RPAREN)
         self.expect(TokenKind.FAT_ARROW)
@@ -1118,7 +1229,7 @@ class Parser:
         else:
             body = self.parse_expr()
 
-        return Lambda(params, body, line, col)
+        return Lambda(params, body, is_async, line, col)
 
     # ============================================================
     # Identifier primary: function calls, field access, struct init

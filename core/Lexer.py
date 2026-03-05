@@ -68,6 +68,7 @@ class TokenKind(Enum):
     # Keywords
     FN = auto()
     LET = auto()
+    FIX = auto()
     CONST = auto()
     STRUCT = auto()
     IMPL = auto()
@@ -120,6 +121,7 @@ class Lexer:
     KEYWORDS = {
         "fn": TokenKind.FN,
         "let": TokenKind.LET,
+        "fix": TokenKind.FIX,
         "const": TokenKind.CONST,
         "struct": TokenKind.STRUCT,
         "impl": TokenKind.IMPL,

@@ -105,6 +105,7 @@ class Interpreter:
         self.enums = {}       # name -> EnumDecl
         self.env = []         # list of dict (scope stack)
         self.const_table = {} # name -> {type, value}
+        self.fix_vars = set() # fix 宣言された不変変数名のセット
         self.call_stack: list = []          # list of CallFrame (runtime call trace)
         self.source_file: str = "<unknown>" # current source file name (set from runner)
 
@@ -113,6 +114,9 @@ class Interpreter:
             "print": self.builtin_print,
             "println": self.builtin_println,
             "to_string": self.builtin_to_string,
+            "read_line": self.builtin_read_line,
+            "parse_int": self.builtin_parse_int,
+            "parse_f64": self.builtin_parse_f64,
         }
 
         # Register built-in functions
@@ -238,6 +242,8 @@ class Interpreter:
 
             try:
                 loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    raise RuntimeError("already running")
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -254,6 +260,11 @@ class Interpreter:
 
         # Push new scope and execute
         self.env.append(new_env)
+        saved_fix_vars = self.fix_vars      # 呼び出し元の fix_vars を退避
+        self.fix_vars = set()               # 関数スコープは新しいセット
+        for param in func.params:           # fix 仮引数を登録
+            if getattr(param, 'is_fix', False):
+                self.fix_vars.add(param.name)
 
         try:
             _ = self.eval_block(func.body)
@@ -264,6 +275,7 @@ class Interpreter:
             if self.env and self.env[-1] is new_env:
                 self.env.pop()
             self.call_stack.pop()
+            self.fix_vars = saved_fix_vars  # 呼び出し元の fix_vars を復元
 
         return None
 
@@ -283,6 +295,7 @@ class Interpreter:
         params = closure['params']
         body = closure['body']
         captured_env = [dict(scope) for scope in closure['captured_env']]
+        is_async = closure.get('is_async', False)
 
         # Create a new scope for lambda params (on top of captured env)
         new_scope = {}
@@ -290,11 +303,36 @@ class Interpreter:
             new_scope[param.name] = arg_value
         captured_env.append(new_scope)
 
+        # Async lambda: run body as asyncio coroutine and return a Future
+        if is_async:
+            async def _run_async_lambda(env=captured_env, b=body):
+                try:
+                    self.exec_block(b, env)
+                except ReturnSignal as rs:
+                    return rs.value
+                return None
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    raise RuntimeError("already running")
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            task = loop.create_task(_run_async_lambda())
+            return {'__future__': True, 'task': task, 'loop': loop}
+
         if isinstance(body, Block):
+            saved_fix_vars = self.fix_vars  # lambda スコープ用に退避
+            self.fix_vars = set()
+            for param in params:            # fix 仮引数を登録
+                if getattr(param, 'is_fix', False):
+                    self.fix_vars.add(param.name)
             try:
                 self.exec_block(body, captured_env)
             except ReturnSignal as rs:
                 return rs.value
+            finally:
+                self.fix_vars = saved_fix_vars
             return None
         else:
             return self.eval_expr(body, captured_env)
@@ -342,11 +380,14 @@ class Interpreter:
         
         Raises:
             RuntimeError: If variable not found in any scope
+            RuntimeError: If variable is immutable (declared with fix)
         
         Notes:
             - Searches from innermost to outermost scope
             - Updates first matching variable (shadowing)
         """
+        if name in self.fix_vars:
+            raise RuntimeError(f"Cannot assign to immutable variable '{name}' (declared with 'fix')")
         for scope in reversed(env):
             if name in scope:
                 scope[name] = value
@@ -378,7 +419,22 @@ class Interpreter:
         # Check const table
         if name in self.const_table:
             return self.const_table[name]
-        
+
+        # トップレベル関数を第一級値（コールバック）として参照する場合
+        if name in self.functions:
+            entry = self.functions[name]
+            if not (isinstance(entry, tuple) and entry[0] == "builtin"):
+                # FunctionDecl をラムダ互換 dict で包む
+                func = entry
+                return {
+                    '__lambda__': True,
+                    '__named_fn__': name,  # デバッグ用
+                    'params': func.params,
+                    'body': func.body,
+                    'is_async': getattr(func, 'is_async', False),
+                    'captured_env': [],  # トップレベルなのでキャプチャなし
+                }
+
         raise RuntimeError(f"Undefined variable: {name}")
 
     # ============================================================
@@ -428,6 +484,11 @@ class Interpreter:
             if stmt.init_expr:
                 value = self.eval_expr(stmt.init_expr, env)
             self.set_var(env, stmt.name, value)
+
+        elif isinstance(stmt, FixDecl):
+            value = self.eval_expr(stmt.init_expr, env)
+            self.set_var(env, stmt.name, value)
+            self.fix_vars.add(stmt.name)
 
         elif isinstance(stmt, Assignment):
             self.exec_assignment(stmt, env)
@@ -711,60 +772,7 @@ class Interpreter:
             return self.get_var(env, expr.name)
 
         if isinstance(expr, UnaryOp):
-            if expr.op == "++":
-                # Pre-increment: ++i
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    new_val = current + 1
-                    self.assign_var(env, var_name, new_val)
-                    return new_val
-                else:
-                    raise RuntimeError("++ can only be applied to variables")
-            
-            if expr.op == "--":
-                # Pre-decrement: --i
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    new_val = current - 1
-                    self.assign_var(env, var_name, new_val)
-                    return new_val
-                else:
-                    raise RuntimeError("-- can only be applied to variables")
-            
-            if expr.op == "post++":
-                # Post-increment: i++
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    self.assign_var(env, var_name, current + 1)
-                    return current  # Return old value
-                else:
-                    raise RuntimeError("++ can only be applied to variables")
-            
-            if expr.op == "post--":
-                # Post-decrement: i--
-                if isinstance(expr.operand, VarRef):
-                    var_name = expr.operand.name
-                    current = self.get_var(env, var_name)
-                    self.assign_var(env, var_name, current - 1)
-                    return current  # Return old value
-                else:
-                    raise RuntimeError("-- can only be applied to variables")
-            
-            v = self.eval_expr(expr.operand, env)
-            if expr.op == "+":
-                return +v
-            if expr.op == "-":
-                return -v
-            if expr.op == "!":
-                # Logical NOT
-                return not self.is_truthy(v)
-            if expr.op == "~":
-                # Bitwise NOT
-                return ~int(v)
-            raise RuntimeError(f"Unknown unary operator: {expr.op}")
+            return self._eval_unary_op(expr, env)
 
         if isinstance(expr, BinaryOp):
             # Handle short-circuit evaluation for logical operators
@@ -833,6 +841,7 @@ class Interpreter:
                 '__lambda__': True,
                 'params': expr.params,
                 'body': expr.body,
+                'is_async': getattr(expr, 'is_async', False),
                 'captured_env': captured_env,
             }
 
@@ -843,6 +852,8 @@ class Interpreter:
                 if loop is None:
                     try:
                         loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            raise RuntimeError("already running")
                     except RuntimeError:
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
@@ -877,6 +888,47 @@ class Interpreter:
             return None
 
         raise RuntimeError(f"Unknown expression: {expr}")
+
+    def _eval_unary_op(self, expr, env):
+        """単項演算子を評価する。eval_expr から委譲される。"""
+        if expr.op == "++":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                new_val = self.get_var(env, var_name) + 1
+                self.assign_var(env, var_name, new_val)
+                return new_val
+            raise RuntimeError("++ can only be applied to variables")
+
+        if expr.op == "--":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                new_val = self.get_var(env, var_name) - 1
+                self.assign_var(env, var_name, new_val)
+                return new_val
+            raise RuntimeError("-- can only be applied to variables")
+
+        if expr.op == "post++":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                old = self.get_var(env, var_name)
+                self.assign_var(env, var_name, old + 1)
+                return old
+            raise RuntimeError("++ can only be applied to variables")
+
+        if expr.op == "post--":
+            if isinstance(expr.operand, VarRef):
+                var_name = expr.operand.name
+                old = self.get_var(env, var_name)
+                self.assign_var(env, var_name, old - 1)
+                return old
+            raise RuntimeError("-- can only be applied to variables")
+
+        v = self.eval_expr(expr.operand, env)
+        if expr.op == "+":  return +v
+        if expr.op == "-":  return -v
+        if expr.op == "!":  return not self.is_truthy(v)
+        if expr.op == "~":  return ~int(v)
+        raise RuntimeError(f"Unknown unary operator: {expr.op}")
 
     def _match_pattern(self, pattern, val):
         """Try to match pattern against val. Returns (bindings_dict, matched_bool)."""
@@ -1061,140 +1113,77 @@ class Interpreter:
     # Method Call
     # ============================================================
     def eval_method_call(self, expr: MethodCall, env):
-        """Invoke method on struct instance.
-        
-        Args:
-            expr (MethodCall): Method call expression with object, method name, and arguments
-            env (list): Scope stack for argument evaluation
-        
-        Processing:
-            1. Evaluate object expression to get struct instance
-            2. Verify object is struct with __struct_name__
-            3. Look up struct definition and method by name
-            4. Evaluate argument expressions
-            5. Create new scope with self binding
-            6. Execute method body with parameter bindings
-        
-        Returns:
-            Return value from method, or None if no explicit return
-        
-        Raises:
-            RuntimeError: If object not struct, struct not defined, method not found
-            ReturnSignal (exception): Caught to extract return value
-        
-        Notes:
-            - First parameter (self) auto-bound to object instance
-            - Remaining parameters filled by position with evaluated arguments
-            - Method scope is isolated from caller scope
-        """
-        # Evaluate object to get struct instance
+        """メソッド呼び出しをオブジェクト種別に応じてディスパッチする。"""
         obj = self.eval_expr(expr.obj, env)
+        args_eval = [self.eval_expr(a, env) for a in expr.args]
 
-        # 動的配列(Python list)のメソッド処理
         if isinstance(obj, list):
-            args_eval = [self.eval_expr(a, env) for a in expr.args]
-            if expr.method == 'push':
-                obj.append(args_eval[0])
-                return None
-            elif expr.method == 'pop':
-                if not obj:
-                    raise MrylRuntimeError("pop() called on empty array", "IndexError", self.call_stack)
-                return obj.pop()
-            elif expr.method == 'len':
-                return len(obj)
-            elif expr.method == 'is_empty':
-                return len(obj) == 0
-            elif expr.method == 'remove':
-                idx = int(args_eval[0])
-                if idx < 0 or idx >= len(obj):
-                    raise MrylRuntimeError(f"remove() index {idx} out of bounds", "IndexError", self.call_stack)
-                return obj.pop(idx)
-            elif expr.method == 'insert':
-                idx, val = int(args_eval[0]), args_eval[1]
-                obj.insert(idx, val)
-                return None
-            raise RuntimeError(f"Unknown array method: {expr.method}")
+            return self._eval_array_method(obj, expr.method, args_eval)
 
-        # Result 型のメソッド処理
         if isinstance(obj, dict) and '__result_tag__' in obj:
-            args_eval = [self.eval_expr(a, env) for a in expr.args]
-            if expr.method == 'is_ok':
-                return obj['__result_tag__'] == 'ok'
-            if expr.method == 'is_err':
-                return obj['__result_tag__'] == 'err'
-            if expr.method == 'try':
-                # .try() : Ok値を取り出す。Err なら構造化エラーで終了
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"Err({obj['value']!r})",
-                    error_type="Error",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"unwrap() called on Err value: {obj['value']!r}",
-                    error_type="UnwrapError",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'err':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"Err({obj['value']!r})",
-                    error_type="Error",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap_err':
-                if obj['__result_tag__'] == 'err':
-                    return obj['value']
-                raise MrylRuntimeError(
-                    f"unwrap_err() called on Ok value: {obj['value']!r}",
-                    error_type="UnwrapError",
-                    call_stack=self.call_stack,
-                )
-            if expr.method == 'unwrap_or':
-                if obj['__result_tag__'] == 'ok':
-                    return obj['value']
-                return args_eval[0] if args_eval else None
-            raise RuntimeError(f"Unknown Result method: {expr.method}")
+            return self._eval_result_method(obj, expr.method, args_eval)
 
-        # Verify object is struct with __struct_name__
-        if not isinstance(obj, dict) or "__struct_name__" not in obj:
-            raise RuntimeError(f"Cannot call method on non-struct value")
-        
-        struct_name = obj["__struct_name__"]
+        if isinstance(obj, dict) and '__struct_name__' in obj:
+            return self._eval_struct_method(obj, expr.method, args_eval)
+
+        raise RuntimeError(f"Cannot call method on non-struct value")
+
+    def _eval_array_method(self, obj: list, method: str, args_eval: list):
+        """動的配列（Python list）のメソッドを処理する。"""
+        if method == 'push':
+            obj.append(args_eval[0])
+            return None
+        if method == 'pop':
+            if not obj:
+                raise MrylRuntimeError("pop() called on empty array", "IndexError", self.call_stack)
+            return obj.pop()
+        if method == 'len':
+            return len(obj)
+        if method == 'is_empty':
+            return len(obj) == 0
+        if method == 'remove':
+            idx = int(args_eval[0])
+            if idx < 0 or idx >= len(obj):
+                raise MrylRuntimeError(f"remove() index {idx} out of bounds", "IndexError", self.call_stack)
+            return obj.pop(idx)
+        if method == 'insert':
+            obj.insert(int(args_eval[0]), args_eval[1])
+            return None
+        raise RuntimeError(f"Unknown array method: {method}")
+
+    def _eval_result_method(self, obj: dict, method: str, args_eval: list):
+        """Result 型（Ok/Err）のメソッドを処理する。"""
+        is_ok = obj['__result_tag__'] == 'ok'
+        if method == 'is_ok':    return is_ok
+        if method == 'is_err':   return not is_ok
+        if method in ('try', 'err'):
+            if is_ok: return obj['value']
+            raise MrylRuntimeError(f"Err({obj['value']!r})", error_type="Error", call_stack=self.call_stack)
+        if method == 'unwrap':
+            if is_ok: return obj['value']
+            raise MrylRuntimeError(f"unwrap() called on Err value: {obj['value']!r}", error_type="UnwrapError", call_stack=self.call_stack)
+        if method == 'unwrap_err':
+            if not is_ok: return obj['value']
+            raise MrylRuntimeError(f"unwrap_err() called on Ok value: {obj['value']!r}", error_type="UnwrapError", call_stack=self.call_stack)
+        if method == 'unwrap_or':
+            return obj['value'] if is_ok else (args_eval[0] if args_eval else None)
+        raise RuntimeError(f"Unknown Result method: {method}")
+
+    def _eval_struct_method(self, obj: dict, method_name: str, args_eval: list):
+        """ユーザー定義 struct のメソッドを実行する。"""
+        struct_name = obj['__struct_name__']
         struct = self.structs.get(struct_name)
-        
         if not struct:
             raise RuntimeError(f"Undefined struct: {struct_name}")
-        
-        # Search for method by name
-        method = None
-        for m in struct.methods:
-            if m.name == expr.method:
-                method = m
-                break
-        
+
+        method = next((m for m in struct.methods if m.name == method_name), None)
         if not method:
-            raise RuntimeError(f"Struct {struct_name} has no method {expr.method}")
-        
-        # Evaluate arguments
-        args = [self.eval_expr(a, env) for a in expr.args]
-        
-        # Create new scope
-        new_env = {}
-        
-        # Bind self to first parameter
-        new_env[method.params[0].name] = obj
-        
-        # Bind remaining arguments
-        for param, arg_value in zip(method.params[1:], args):
-            new_env[param.name] = arg_value
-        
-        # Execute method body
+            raise RuntimeError(f"Struct {struct_name} has no method {method_name}")
+
+        new_env = {method.params[0].name: obj}
+        for param, val in zip(method.params[1:], args_eval):
+            new_env[param.name] = val
+
         self.env.append(new_env)
         try:
             for stmt in method.body.statements:
@@ -1203,8 +1192,6 @@ class Interpreter:
             return ret.value
         finally:
             self.env.pop()
-        
-        # Default return value (if no explicit return)
         return None
 
     # ============================================================
@@ -1313,7 +1300,33 @@ class Interpreter:
             return self.format_string(args)
         
         # Simple string conversion
+        if isinstance(args[0], bool):
+            return "true" if args[0] else "false"
         return str(args[0])
+
+    def builtin_read_line(self, args):
+        """Read one line from stdin, returning it with leading/trailing whitespace stripped."""
+        return input()
+
+    def builtin_parse_int(self, args):
+        """Parse a string to i32. Panics if the string is not a valid integer."""
+        if len(args) < 1:
+            raise RuntimeError("parse_int expects 1 argument")
+        s = str(args[0]).strip()
+        try:
+            return int(s)
+        except ValueError:
+            raise RuntimeError(f"parse_int: cannot parse '{s}' as i32")
+
+    def builtin_parse_f64(self, args):
+        """Parse a string to f64. Panics if the string is not a valid float."""
+        if len(args) < 1:
+            raise RuntimeError("parse_f64 expects 1 argument")
+        s = str(args[0]).strip()
+        try:
+            return float(s)
+        except ValueError:
+            raise RuntimeError(f"parse_f64: cannot parse '{s}' as f64")
 
     def format_string(self, args):
         """Format string with placeholder substitution.
@@ -1342,7 +1355,13 @@ class Interpreter:
         
         if not isinstance(args[0], str):
             # If no format string, concatenate all arguments
-            return "".join(str(a) for a in args)
+            def _val_to_str(v):
+                if isinstance(v, bool):
+                    return "true" if v else "false"
+                elif isinstance(v, float):
+                    return f"{v:g}"
+                return str(v)
+            return "".join(_val_to_str(a) for a in args)
         
         format_str = args[0]
         rest_args = args[1:]
@@ -1357,7 +1376,13 @@ class Interpreter:
                 # Found {} placeholder
                 if arg_index >= len(rest_args):
                     raise RuntimeError("Not enough arguments for format string")
-                result.append(str(rest_args[arg_index]))
+                v = rest_args[arg_index]
+                if isinstance(v, bool):
+                    result.append("true" if v else "false")
+                elif isinstance(v, float):
+                    result.append(f"{v:g}")
+                else:
+                    result.append(str(v))
                 arg_index += 1
                 i += 2
             elif format_str[i] == '\\' and i < len(format_str) - 1:

@@ -1,32 +1,116 @@
-# Mryl プログラミング言語(v0.1.0) - 言語リファレンス
+# Mryl プログラミング言語(v0.2.0) - 言語リファレンス
 
-**Mryl** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
+<p align="left">
+  <img src="assets/icon_banner.svg" width="700" alt="Mryl banner"/>
+</p>
+
+**Mryl（ミリルと読みます）** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
+
+言語の詳細仕様は **doc/mryl_specification.md** を参照してください。
 
 ## 目次
 
-1. [セットアップ](#セットアップ)
-2. [概要](#概要)
-3. [基本型](#基本型)
-4. [変数宣言](#変数宣言)
-5. [定数宣言](#定数宣言)
-6. [演算子](#演算子)
-7. [型キャスト](#型キャスト)
-8. [制御構文](#制御構文)
-9. [条件付きコンパイル](#条件付きコンパイル)
-10. [関数](#関数)
-11. [ラムダ式](#ラムダ式)
-12. [async / await](#async--await)
-13. [ジェネリック](#ジェネリック)
-14. [構造体](#構造体)
-15. [enum（列挙型）](#enum列挙型)
-16. [match 式](#match-式)
-17. [Result 型とエラーハンドリング](#result-型とエラーハンドリング)
-18. [配列（固定長）](#配列固定長)
-19. [可変長配列（T[]）](#可変長配列t)
-20. [組み込み関数](#組み込み関数)
-21. [型推論](#型推論)
-22. [型チェック](#型チェック)
-23. [まとめ](#まとめ)
+1. [クイックスタート](#クイックスタート)
+2. [セットアップ](#セットアップ)
+3. [概要](#概要)
+4. [基本型](#基本型)
+5. [変数宣言](#変数宣言)
+6. [定数宣言](#定数宣言)
+7. [演算子](#演算子)
+8. [型キャスト](#型キャスト)
+9. [制御構文](#制御構文)
+10. [条件付きコンパイル](#条件付きコンパイル)
+11. [関数](#関数)
+12. [ラムダ式](#ラムダ式)
+13. [async / await](#async--await)
+14. [ジェネリック](#ジェネリック)
+15. [構造体](#構造体)
+16. [enum（列挙型）](#enum列挙型)
+17. [match 式](#match-式)
+18. [Result 型とエラーハンドリング](#result-型とエラーハンドリング)
+19. [配列（固定長）](#配列固定長)
+20. [可変長配列（T[]）](#可変長配列t)
+21. [組み込み関数](#組み込み関数)
+22. [型推論](#型推論)
+23. [型チェック](#型チェック)
+24. [まとめ](#まとめ)
+25. [トラブルシューティング](#トラブルシューティング)
+
+---
+
+## クイックスタート
+
+**5分で Hello World を動かす手順です。**
+
+### 1. ファイルを作る
+
+`hello.ml` というファイルを作成します：
+
+```mryl
+fn main() -> i32 {
+    println("Hello, Mryl!");
+
+    let name = "world";
+    let n    = 42;
+    println("name={}, n={}", name, n);
+
+    return 0;
+}
+```
+
+### 2. 実行する
+
+```powershell
+# 仮想環境を有効化している場合
+.venv\Scripts\python.exe core\Mryl.py hello.ml
+```
+
+### 3. 出力イメージ
+
+```
+=== Python Interpreter ===
+Hello, Mryl!
+name=world, n=42
+
+=== C Compilation ===
+OK - Compilation successful: bin\Mryl.exe
+
+=== Native Execution ===
+Hello, Mryl!
+name=world, n=42
+Program returned: 0
+```
+
+Python インタプリタと C ネイティブの両方で実行されます。生成ファイルは `bin\Mryl.c` と `bin\Mryl.exe` です。
+
+### もう少し試してみる
+
+```mryl
+fn greet(name: string) -> string {
+    return "Hello, " + name + "!";
+}
+
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+fn main() -> i32 {
+    // 関数呼び出し
+    println("{}", greet("Mryl"));     // Hello, Mryl!
+
+    // struct
+    let p = Point { x: 3, y: 4 };
+    println("x={}, y={}", p.x, p.y); // x=3, y=4
+
+    // ループ
+    for (let i = 1; i <= 3; i++) {
+        println("i={}", i);
+    }
+
+    return 0;
+}
+```
 
 ---
 
@@ -151,9 +235,13 @@ Mryl は以下の機能を備えています：
 - **制御構文**：if/else, while, for（Rust 風、C 風）、`break` / `continue`
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
 - **フォーマット文字列**：Rust 風の `println("i = {}", i)` 表記
-- **関数**：戻り値型指定、複数パラメータ
+- **関数**：戻り値型指定、複数パラメータ、前方宣言による相互再帰
 - **ラムダ式**：`(x, y) => x + y` の無名関数
-- **async/await**：非同期関数と待機構文
+- **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
+- **fix キーワード**：不変変数・不変引数の宣言
+- **async/await**：非同期関数と待機構文（async ラムダ含む）
+- **string 操作**：連結（`+`）、比較（`==` / `!=`）
+- **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`
 - **構造化エラー出力**：タイムスタンプ付きスタックトレース + 行番号
 
 ---
@@ -590,6 +678,16 @@ let mul2 = (x: i32) => x * 2;
 let add  = (x: i32, y: i32) => x + y;
 ```
 
+`=>` の右辺を `{ }` で囲むことで、複数のステートメントを持つ**ブロックボディ**を記述できます：
+
+```mryl
+let process = (x: i32) => {
+    let doubled = x * 2;
+    let result  = doubled * 2;
+    println(result);
+};
+```
+
 ### ラムダ式の呼び出し
 
 通常の関数と同じ構文で呼び出せます：
@@ -610,9 +708,49 @@ fn main() {
 ### 特徴
 
 - **型注釈**：パラメータに `: 型` で型を指定
-- **単一式ボディ**：`=>` の右辺は式（ブロックも可）
+- **単一式ボディ**：`(x: i32) => x * 2` のように `=>` の右辺を単一の式で記述
+- **ブロックボディ**：`(x: i32) => { ... }` のように `{ }` で複数ステートメントを記述可能。`return` 文なしは `void`、`return` 文ありはその型を自動推論
 - **関数ポインタ型**：C コード生成時は型付き関数ポインタ (`int32_t (*f)(int32_t)`) に変換
 - **クロージャ**：Python インタプリタモードでは宣言時の環境をキャプチャ
+
+### async ラムダ式
+
+`async` キーワードをラムダ式の前に付けることで、**非同期ラムダ**を定義できます：
+
+```mryl
+fn main() {
+    // 戻り値なし async ラムダ
+    let greet = async (name: i32) => {
+        println(name);
+    };
+    await greet(42);
+
+    // await を内包する async ラムダ（async fn の結果を待機）
+    let compute = async (x: i32) => {
+        let result = await some_async_fn(x);
+        println(result);
+    };
+    await compute(10);
+}
+```
+
+**構文**：
+
+```
+async (パラメータリスト) => { ブロックボディ }
+```
+
+**特徴**：
+
+| 項目 | 内容 |
+|------|------|
+| 戻り値型 | `MrylTask*`（タスクハンドル） |
+| 呼び出し | `await 変数名(引数)` で待機・実行 |
+| `await` 内包 | ブロック内で `await` を使用して他の async 関数/ラムダ呼び出し可能 |
+| C コード生成 | 専用ステートマシン（SM）＋ファクトリ関数として展開 |
+| Python モード | `asyncio.create_task()` でコルーチンとして実行 |
+
+> **注意**：async ラムダはブロックボディ `{ }` のみサポートします。単一式ボディ（`async (x) => x * 2`）は使用できません。
 
 ---
 
@@ -1308,6 +1446,24 @@ println("Converted: {}", s);
 let x = 100;
 println(to_string("Value is {}", x));
 ```
+
+### read_line / parse_int / parse_f64
+```mryl
+// 標準入力から1行読み取る
+let line: string = read_line();
+println("got={}", line);
+
+// 文字列を i32 に変換
+let n: i32 = parse_int(read_line());
+println("n+1={}", n + 1);
+
+// 文字列を f64 に変換
+let f: f64 = parse_f64(read_line());
+println("f*2={}", f * 2.0);
+```
+
+変換に失敗した場合（数値以外の文字列を渡した場合）は `ParseError` でパニックします。
+
 ---
 
 ## まとめ
@@ -1331,6 +1487,11 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ インクリメント/デクリメント演算子  
 ✓ フォーマット文字列（`println("Value: {}", x)` 形式）  
 ✓ **ラムダ式**（`(x, y) => x + y`）  
+✓ **fn 型パラメータ**（高階関数・コールバック）  
+✓ **fix キーワード**（不変変数・不変関数パラメータ）  
+✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`）  
+✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`）  
 ✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
 ✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
 
@@ -1357,5 +1518,77 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_13_boundary_numeric.ml](../tests/test_13_boundary_numeric.ml) | 数値型境界値（C0・境界値分析） | ✅ Python + C + Native |
 | [tests/test_14_branch_coverage.ml](../tests/test_14_branch_coverage.ml) | 条件分岐網羅（C0/C1/MC/DC） | ✅ Python + C + Native |
 | [tests/test_15_loop_boundary.ml](../tests/test_15_loop_boundary.ml) | ループ境界値（while/for/break/continue）| ✅ Python + C + Native |
+| [tests/test_16_async_lambda.ml](../tests/test_16_async_lambda.ml) | async ラムダ式（定義・呼び出し・await 待機・ネスト await） | ✅ Python + C + Native |
+| [tests/test_17_higherorder.ml](../tests/test_17_higherorder.ml) | 高階関数・ラムダ応用・前方宣言・相互再帰 | ✅ Python + C + Native |
+| [tests/test_18_string_ops.ml](../tests/test_18_string_ops.ml) | string 操作（連結・比較） | ✅ Python + C + Native |
+| [tests/test_19_nested_struct.ml](../tests/test_19_nested_struct.ml) | ネスト struct・struct 配列 | ✅ Python + C + Native |
+| [tests/test_20_callback.ml](../tests/test_20_callback.ml) | fn 型パラメータ（コールバック） | ✅ Python + C + Native |
+| [tests/test_21_fix.ml](../tests/test_21_fix.ml) | `fix` キーワード（不変変数・不変引数） | ✅ Python + C + Native |
+| [tests/test_22_input.ml](../tests/test_22_input.ml) | ユーザー入力（`read_line` / `parse_int` / `parse_f64`） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
+
+---
+
+## トラブルシューティング
+
+### GCC が見つからない
+
+```
+FileNotFoundError: [WinError 2] 指定されたファイルが見つかりません: 'C:\cygwin64\bin\bash.exe'
+```
+
+**原因**: Cygwin がインストールされていない、またはパスが違う。
+
+**解決策**:
+
+1. [Cygwin](https://www.cygwin.com/) をインストールし、`gcc-core` パッケージを選択する
+2. `core/Mryl.py` 内の `CYGWIN_BASH` 定数を実際のインストールパスに変更する
+
+```python
+# core/Mryl.py の先頭付近を確認して変更
+CYGWIN_BASH = r"C:\cygwin64\bin\bash.exe"  # 実際のパスに変更
+```
+
+---
+
+### Python バージョンエラー
+
+```
+SyntaxError: ...
+```
+
+**原因**: Python 3.9 未満を使用している。
+
+**解決策**: `python --version` でバージョンを確認し、Python 3.9 以上を使用する。
+
+---
+
+### C コンパイルは成功するが実行結果が Python と違う
+
+**原因**: `f64` の `println` フォーマットや `bool` の表示など、バージョン間の挙動差異が残っている可能性。
+
+**解決策**: [Issues](https://github.com/Mryl-Dev/Mryl/issues) に報告するか、`tests/` 下の類似テストファイルで同様の機能を確認する。
+
+---
+
+### `ParseError: cannot parse string as i32` が出る
+
+**原因**: `parse_int()` に整数以外の文字列を渡した。
+
+```mryl
+// NG: 数値以外が入るとクラッシュ
+let n = parse_int(read_line());  // 入力: "abc" → ParseError
+```
+
+**解決策**: 入力内容が正しい数値文字列かを確認する。`read_line()` は末尾の改行を自動除去するため、改行は問題ない。
+
+---
+
+### `TypeError` が発生する
+
+`fix` 変数への再代入・型の不一致などが原因です。エラーメッセージに行番号が表示されるので、その行を確認する。
+
+```
+TypeError at line 5: cannot assign to fix variable 'x'
+```

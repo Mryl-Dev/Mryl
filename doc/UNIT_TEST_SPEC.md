@@ -3,8 +3,9 @@
 | 項目 | 内容 |
 |------|------|
 | 文書番号 | MRYL-UT-001 |
-| 版数 | 1.0 |
+| 版数 | 1.3 |
 | 作成日 | 2026-02-21 |
+| 更新日 | 2026-02-23 |
 | 対象バージョン | Mryl 言語実装 (Python Interpreter + C CodeGenerator) |
 | テスト環境 | Windows / Python 3.x / GCC (Cygwin) / Claude Sonnet 4.6 |
 
@@ -44,6 +45,7 @@ Mryl 言語インタープリタおよび C コードジェネレータに対し
 | `tests/test_13_boundary_numeric.ml` | 数値型境界値試験 | 境界値分析 |
 | `tests/test_14_branch_coverage.ml` | 条件分岐網羅試験 | C0 / C1 / MC/DC |
 | `tests/test_15_loop_boundary.ml` | ループ境界値試験 | C0 / C1 / 境界値分析 |
+| `tests/test_16_async_lambda.ml` | async ラムダ式試験 | C0 / 機能確認 |
 
 ---
 
@@ -95,11 +97,11 @@ Mryl 言語インタープリタおよび C コードジェネレータに対し
 | T13-19 | 最大値-1 | 2147483646 | i32_max1=2147483646 | ✅ | - |
 | T13-20 | 最大値 | 2147483647 | i32_max=2147483647 | ✅ | - |
 
-#### 4.1.5 i64 型 ― C ネイティブ実行制約
+#### 4.1.5 i64 型
 
-| TID | 観点 | 状態 | 理由 |
+| TID | 観点 | 状態 | 備考 |
 |-----|------|------|------|
-| T13-N5 | i64 全境界値 | **C Native 実施不可** | C コードジェネレータが i64 変数出力に `%d`（32bit）フォーマットを使用するため、64 bit 値が正しく表示されない既知バグ（→§6.2） |
+| T13-N5 | i64 全境界値 | ✅ **解決済み** | `_type_to_fmt_spec` を `%lld` に修正（2026-02-23）。全モードで正常動作することを確認済み（→§6.2） |
 
 #### 4.1.6 算術演算境界値（i32 対象）
 
@@ -244,14 +246,44 @@ fn logic_or(a: i32, b: i32) -> bool
 
 ---
 
+### 4.4 async ラムダ式試験（test_16）
+
+`async (params) => { block }` の定義・呼び出し・await 待機をテストします。
+
+#### 4.4.1 async ラムダ（ボディ内 await なし）
+
+| TID | 観点 | 入力 | 期待出力 | C0 |
+|-----|------|------|----------|-----|
+| T16-01 | void async ラムダの定義と呼び出し | `greet(42)` | `42` | ✅ |
+| T16-03 | 同ラムダの複数回呼び出し | `greet(100)` | `100` | ✅ |
+
+#### 4.4.2 async ラムダ（ボディ内 await あり）
+
+| TID | 観点 | 入力 | 期待出力 | C0 |
+|-----|------|------|----------|-----|
+| T16-02 | async fn を await する async ラムダ | `compute(5)` → `double_value(5)` | `10` | ✅ |
+| T16-04 | 同ラムダの複数回呼び出し | `compute(10)` → `double_value(10)` | `20` | ✅ |
+
+**全体期待出力順**：
+
+```
+42
+10
+100
+20
+```
+
+---
+
 ## 5. カバレッジ達成目標
 
 | 基準 | 目標 | 対象テスト |
 |------|------|-----------|
-| C0（命令網羅） | 100% | test_13, test_14, test_15 の全文実行 |
+| C0（命令網羅） | 100% | test_13, test_14, test_15, test_16 の全文実行 |
 | C1（分岐網羅） | 100% | test_14, test_15 の全 if/while 真偽 |
 | MC/DC | &&, \|\| 全複合条件 | test_14 (T14-08〜T14-16) |
 | 境界値網羅 | 実施可能な型の全境界 | test_13 全項目 |
+| 機能確認 | async ラムダ全パターン | test_16 全項目 |
 
 ---
 
@@ -263,12 +295,14 @@ fn logic_or(a: i32, b: i32) -> bool
 **理由**: Mryl の型キャスト構文 `value(type)` では、型範囲外のリテラルを記述した場合に Python パーサが `int` として受け取り C 側で未定義動作を引き起こす。また、オーバーフロー時の動作は C 言語仕様上の未定義動作（signed integer overflow は UB）であり、テスト結果の再現性が保証されない。  
 **エビデンス**: C 標準 §6.5 "If an exceptional condition occurs during the evaluation of an expression, the behavior is undefined."
 
-### 6.2 i64 / u64 型の C ネイティブ出力
+### 6.2 i64 / u64 型の C ネイティブ出力 ― ✅ 解決済み（2026-02-23）
 
 **対象**: T13-N5  
-**理由**: 現在の C コードジェネレータ（`CodeGenerator.py`）は i64/u64 型変数の `println` 出力に `%d`（32 ビット整数フォーマット）を使用しており、64 ビット値が正しく表示されない。例: `9999999999` が `1410065407` として表示される（上位ビット切り捨て）。Python インタープリタでは正常動作する。  
-**再現手順**: `tests/test_01_types.ml` の `i64=9999999999` の Native 出力が `1410065407` となることで確認済み。  
-**対処方針**: `%lld` フォーマット指定子を使用するよう CodeGenerator を修正することで解決可能（別 Issue として管理）。
+**旧問題**: C コードジェネレータ（`CodeGenerator` パッケージ）が i64/u64 型変数の `println` 出力に `%d`（32 ビット整数フォーマット）を使用しており、64 ビット値が正しく表示されなかった。例: `9999999999` が `1410065407` として表示される（上位ビット切り捨て）。  
+**修正内容**:  
+- `CodeGenerator/_type.py` の `_type_to_fmt_spec` に `i64 → %lld`、`u64 → %llu`、`u32/u16/u8 → %u` を追加  
+- `CodeGenerator/_expr.py` の `{}` 数と引数不一致フォールバックパスで、全 `{}` を `%d` 固定置換していた箇所を `_type_to_fmt_spec` 呼び出しに変更  
+**確認**: 全 16 テスト PASS（Interpreter / C Compile / C Native 全モード）。
 
 ### 6.3 ゼロ除算
 
@@ -301,9 +335,10 @@ fn logic_or(a: i32, b: i32) -> bool
 
 | テストファイル | Python Interp | C Compile | C Native | 備考 |
 |--------------|:---:|:---:|:---:|------|
-| test_13_boundary_numeric.ml | ✅ PASS | ✅ PASS | ✅ PASS | i64 Native は %d 制限で 1410065407（§6.2 既知制約・SKIP 扱い） |
+| test_13_boundary_numeric.ml | ✅ PASS | ✅ PASS | ✅ PASS | i64/u64 の `%lld`/`%llu` 修正により全値正常出力（§6.2 解決済み） |
 | test_14_branch_coverage.ml | ✅ PASS | ✅ PASS | ✅ PASS | MC/DC 全パス（&&/\|\|）確認済み |
 | test_15_loop_boundary.ml | ✅ PASS | ✅ PASS | ✅ PASS | 0回/1回/N回境界・break/continue 確認済み |
+| test_16_async_lambda.ml | ✅ PASS | ✅ PASS | ✅ PASS | async ラムダ（void/await あり）・複数回呼び出し確認済み |
 
 ---
 

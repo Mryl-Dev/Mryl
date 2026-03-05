@@ -1,0 +1,253 @@
+from __future__ import annotations
+from Ast import Block, ExprStmt, FunctionDecl, TypeNode
+from CodeGenerator._proto import _CodeGeneratorBase
+
+class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
+    """ラムダ・クロージャの C コード生成を担当する Mixin。
+    _body_has_await / _collect_captures /
+    _generate_lambda / _generate_lambda_inline / _generate_async_lambda
+    """
+
+    def _body_has_await(self, body) -> bool:
+        """関数ボディに await 文が含まれるかどうかを返す（ループ内も再帰検索）。"""
+        if not body:
+            return False
+        return self._stmts_have_await(body.statements)
+
+    def _stmts_have_await(self, stmts) -> bool:
+        """文リストに await が含まれるかを再帰的に検査する。"""
+        for stmt in stmts:
+            cls = stmt.__class__.__name__
+            if cls == 'LetDecl' and stmt.init_expr and \
+               stmt.init_expr.__class__.__name__ == 'AwaitExpr':
+                return True
+            if cls == 'ExprStmt' and stmt.expr.__class__.__name__ == 'AwaitExpr':
+                return True
+            if cls in ('ForStmt', 'WhileStmt') and stmt.body:
+                if self._stmts_have_await(stmt.body.statements):
+                    return True
+            if cls == 'IfStmt':
+                if stmt.then_block and self._stmts_have_await(stmt.then_block.statements):
+                    return True
+                if stmt.else_block:
+                    eb_cls = stmt.else_block.__class__.__name__
+                    eb_stmts = [stmt.else_block] if eb_cls == 'IfStmt' \
+                               else stmt.else_block.statements
+                    if self._stmts_have_await(eb_stmts):
+                        return True
+        return False
+
+    def _collect_captures(self, node, param_names: set) -> dict:
+        """ラムダ本体からクロージャキャプチャ変数を収集する。
+        戻り値: {変数名: C型文字列}
+        """
+        captures = {}
+
+        def walk(n):
+            if n is None:
+                return
+            cls = n.__class__.__name__
+            if cls == 'VarRef' and n.name not in param_names and n.name not in captures:
+                for scope in reversed(self.env):
+                    if n.name in scope:
+                        t   = scope[n.name]
+                        c_t = {
+                            "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
+                            "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
+                            "f32": "float",  "f64": "double",
+                            "string": "MrylString", "bool": "int",
+                            "fn": "void*", "fn_closure": "void*", "int": "int32_t",
+                        }.get(t, "int32_t")
+                        captures[n.name] = c_t
+                        break
+            elif cls in ('BinaryOp', 'CompareOp'):
+                walk(n.left); walk(n.right)
+            elif cls == 'UnaryOp':
+                walk(n.operand)
+            elif cls == 'FunctionCall':
+                for a in n.args:
+                    walk(a)
+            elif cls == 'Block':
+                for s in n.statements:
+                    walk(s)
+            elif cls == 'LetDecl':
+                if n.init_expr:
+                    walk(n.init_expr)
+            elif cls == 'ReturnStmt':
+                if n.expr:
+                    walk(n.expr)
+            elif cls == 'ExprStmt':
+                walk(n.expr)
+            elif cls in ('IfStmt', 'IfExpr'):
+                walk(n.condition)
+                walk(n.then_block)
+                if n.else_block:
+                    walk(n.else_block)
+            elif cls == 'MethodCall':
+                walk(n.obj)
+                for a in (n.args or []):
+                    walk(a)
+
+        walk(node)
+        return captures
+
+    def _generate_lambda(self, expr) -> str:
+        """Lambda ノードを static ヘルパー関数として pending_lambdas に追加し関数名を返す。"""
+        lam_name = f"__lambda_{self.lambda_counter}"
+        self.lambda_counter += 1
+
+        if getattr(expr, 'is_async', False):
+            return self._generate_async_lambda(expr, lam_name)
+
+        param_names = {p.name for p in expr.params}
+        captures    = self._collect_captures(expr.body, param_names)
+
+        params_c = []
+        for p in expr.params:
+            ptype = self._type_to_c(p.type_node) if p.type_node else "int32_t"
+            params_c.append(f"{ptype} {p.name}")
+        params_str = ", ".join(params_c) if params_c else "void"
+
+        saved_code             = self.code
+        saved_indent           = self.indent_level
+        saved_capture_map      = dict(self.capture_map)
+        saved_local_str_vars   = list(getattr(self, 'local_string_vars', []))
+        saved_temp_str_ctr     = getattr(self, 'temp_string_counter', 0)
+        self.code              = []
+        self.indent_level      = 1
+        self.local_string_vars = []
+        self.temp_string_counter = 0
+        if captures:
+            self.capture_map = {n: f"__env->{n}" for n in captures}
+
+        if isinstance(expr.body, Block):
+            for stmt in expr.body.statements:
+                self._generate_statement(stmt)
+            inferred = getattr(expr, 'inferred_return_type', None)
+            ret_type = self._type_to_c(inferred) if inferred and inferred.name != 'void' else "void"
+        else:
+            body_expr = self._generate_expr(expr.body)
+            self._emit(f"return {body_expr};")
+            ret_type  = "int32_t"
+
+        body_lines             = self.code
+        self.code              = saved_code
+        self.indent_level      = saved_indent
+        self.capture_map       = saved_capture_map
+        self.local_string_vars = saved_local_str_vars
+        self.temp_string_counter = saved_temp_str_ctr
+
+        self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines, captures))
+        return lam_name
+
+    def _generate_lambda_inline(self, expr, var_name: str):
+        """let 宣言のラムダ初期値を生成する。
+        戻り値: (lam_name, ret_type, params_str, captures)
+        """
+        lam_name = f"__lambda_{self.lambda_counter}"
+        self.lambda_counter += 1
+
+        if getattr(expr, 'is_async', False):
+            self._generate_async_lambda(expr, lam_name)
+            params_c = []
+            for p in expr.params:
+                ptype = self._type_to_c(p.type_node) if p.type_node else "int32_t"
+                params_c.append(f"{ptype} {p.name}")
+            params_str = ", ".join(params_c) if params_c else "void"
+            return lam_name, "MrylTask*", params_str, {}
+
+        param_names = {p.name for p in expr.params}
+        captures    = self._collect_captures(expr.body, param_names)
+
+        params_c = []
+        for p in expr.params:
+            ptype = self._type_to_c(p.type_node) if p.type_node else "int32_t"
+            params_c.append(f"{ptype} {p.name}")
+        params_str = ", ".join(params_c) if params_c else "void"
+
+        if isinstance(expr.body, Block):
+            inferred = getattr(expr, 'inferred_return_type', None)
+            ret_type = self._type_to_c(inferred) if inferred and inferred.name != 'void' else "void"
+        else:
+            ret_type = "int32_t"
+
+        saved_code             = self.code
+        saved_indent           = self.indent_level
+        saved_capture_map      = dict(self.capture_map)
+        saved_local_str_vars   = list(getattr(self, 'local_string_vars', []))
+        saved_temp_str_ctr     = getattr(self, 'temp_string_counter', 0)
+        body_lines_code        = []
+        self.code              = body_lines_code
+        self.indent_level      = 1
+        self.local_string_vars = []
+        self.temp_string_counter = 0
+        if captures:
+            self.capture_map = {n: f"__env->{n}" for n in captures}
+
+        if isinstance(expr.body, Block):
+            for stmt in expr.body.statements:
+                self._generate_statement(stmt)
+        else:
+            body_expr_code = self._generate_expr(expr.body)
+            self._emit(f"return {body_expr_code};")
+
+        self.code              = saved_code
+        self.indent_level      = saved_indent
+        self.capture_map       = saved_capture_map
+        self.local_string_vars = saved_local_str_vars
+        self.temp_string_counter = saved_temp_str_ctr
+
+        self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines_code, captures))
+        return lam_name, ret_type, params_str, captures
+
+    def _generate_async_lambda(self, expr, lam_name: str) -> str:
+        """async lambda を状態機械 C コードとして生成し pending_async_lambda_blocks に追加する。
+        戻り値: ファクトリ関数名 (MrylTask* lam_name(params))
+        """
+        body_block = expr.body if isinstance(expr.body, Block) else Block([ExprStmt(expr.body)])
+        inferred   = getattr(expr, 'inferred_return_type', None)
+        ret_type   = inferred if inferred else TypeNode("void")
+
+        synth_func = FunctionDecl(
+            name=lam_name,
+            params=expr.params,
+            return_type=ret_type,
+            body=body_block,
+            is_async=True,
+        )
+
+        saved_code             = self.code
+        saved_indent           = self.indent_level
+        saved_sm_mode          = self.sm_mode
+        saved_sm_vars          = self.sm_vars
+        saved_sm_await_handles = getattr(self, 'sm_await_handles', {})
+        saved_lambda_counter   = self.lambda_counter
+        saved_capture_map      = dict(self.capture_map)
+        saved_ident_renames    = dict(self.ident_renames)
+        saved_return_type      = self.current_return_type
+
+        self.code         = []
+        self.indent_level = 0
+        self.capture_map  = {}
+        self.ident_renames = {}
+
+        self.env.append({})
+        for p in expr.params:
+            ptype_name            = p.type_node.name if p.type_node else 'i32'
+            self.env[-1][p.name] = ptype_name
+
+        self._generate_async_state_machine(synth_func)
+        self.env.pop()
+
+        async_lines              = self.code
+        self.code                = saved_code
+        self.indent_level        = saved_indent
+        self.sm_mode             = saved_sm_mode
+        self.sm_vars             = saved_sm_vars
+        self.sm_await_handles    = saved_sm_await_handles
+        self.capture_map         = saved_capture_map
+        self.ident_renames       = saved_ident_renames
+        self.current_return_type = saved_return_type
+
+        self.pending_async_lambda_blocks.append(async_lines)
+        return lam_name
