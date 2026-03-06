@@ -17,3 +17,9 @@ class SyntaxError_(MrylError):
     def __init__(self, message, token=None):
         super().__init__(message)
         self.token = token
+
+class RuntimeError_(MrylError):
+    """Runtime error (e.g. division by zero, index out of bounds)"""
+    def __init__(self, message, node=None):
+        super().__init__(message)
+        self.node = node

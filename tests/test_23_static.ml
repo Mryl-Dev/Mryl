@@ -166,5 +166,6 @@ fn main() -> i32 {
     let s2 = get_signed(false);
     println("negative={}", s2.get());          // -1
 
+    println("=== OK ===");
     return 0;
 }

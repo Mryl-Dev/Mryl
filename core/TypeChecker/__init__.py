@@ -77,6 +77,13 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
             body=None,
             type_params=[]
         )
+        self.functions["checked_div"] = FunctionDecl(
+            name="checked_div",
+            params=[Param("a", TypeNode("i32")), Param("b", TypeNode("i32"))],
+            return_type=TypeNode("Result", type_args=[TypeNode("i32"), TypeNode("string")]),
+            body=None,
+            type_params=[]
+        )
 
     # ============================================
     # 型比較（ジェネリクス対応）

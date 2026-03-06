@@ -268,6 +268,51 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
+        # checked_div: safe integer division returning Result<i32, string>
+        # Pre-register the typedef so _RESULT_TYPEDEFS_PLACEHOLDER is correctly filled
+        self.result_type_registry.add(('int32_t', 'MrylString', 'MrylResult_int32_t_MrylString'))
+        self._emit("// checked_div(a, b) -> MrylResult_int32_t_MrylString")
+        self._emit("// Returns Ok(a/b) or Err(\"division by zero\")")
+        self._emit("static MrylResult_int32_t_MrylString checked_div(int32_t a, int32_t b) {")
+        self.indent_level += 1
+        self._emit("if (b == 0) {")
+        self.indent_level += 1
+        self._emit("MrylResult_int32_t_MrylString __r;")
+        self._emit("__r.is_ok = 0;")
+        self._emit("__r.data.err_val = make_mryl_string(\"division by zero\");")
+        self._emit("return __r;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("MrylResult_int32_t_MrylString __r;")
+        self._emit("__r.is_ok = 1;")
+        self._emit("__r.data.ok_val = a / b;")
+        self._emit("return __r;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
+        # mryl_safe_div / mryl_safe_mod: panic on zero divisor (Phase 1 trap)
+        self._emit("// mryl_safe_div / mryl_safe_mod: panic on zero divisor")
+        self._emit("static int32_t mryl_safe_div(int32_t a, int32_t b) {")
+        self.indent_level += 1
+        self._emit("if (b == 0) {")
+        self.indent_level += 1
+        self._emit("mryl_panic(\"RuntimeError\", \"division by zero\", __func__, __FILE__, __LINE__);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("return a / b;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("static int32_t mryl_safe_mod(int32_t a, int32_t b) {")
+        self.indent_level += 1
+        self._emit("if (b == 0) {")
+        self.indent_level += 1
+        self._emit("mryl_panic(\"RuntimeError\", \"division by zero\", __func__, __FILE__, __LINE__);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("return a % b;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
 
     def _emit_header(self):
         """組み込み型・関数をまとめて出力する (内部利用) """

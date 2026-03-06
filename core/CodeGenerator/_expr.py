@@ -54,6 +54,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                     return f"(strcmp(({left}).data, ({right}).data) == 0)"
                 if op == "!=":
                     return f"(strcmp(({left}).data, ({right}).data) != 0)"
+            # ゼロ除算チェック: 整数 / と % はランタイムチェック付きヘルパーに変換
+            if op in ("/", "%") and left_type not in ("f32", "f64") and right_type not in ("f32", "f64"):
+                helper = "mryl_safe_div" if op == "/" else "mryl_safe_mod"
+                return f"{helper}({left}, {right})"
             # && / || を明示的にマップ(他は同一)
             c_op = {"&&": "&&", "||": "||"}.get(op, op)
             return f"({left} {c_op} {right})"

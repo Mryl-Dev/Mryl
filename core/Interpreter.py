@@ -117,6 +117,7 @@ class Interpreter:
             "read_line": self.builtin_read_line,
             "parse_int": self.builtin_parse_int,
             "parse_f64": self.builtin_parse_f64,
+            "checked_div": self.builtin_checked_div,
         }
 
         # Register built-in functions
@@ -1056,8 +1057,16 @@ class Interpreter:
         if op == "*":
             return left * right
         if op == "/":
+            if right == 0:
+                from MrylError import RuntimeError_ as MrylRuntimeError
+                raise MrylRuntimeError("division by zero")
+            if isinstance(left, float) or isinstance(right, float):
+                return left / right
             return left // right  # Integer division
         if op == "%":
+            if right == 0:
+                from MrylError import RuntimeError_ as MrylRuntimeError
+                raise MrylRuntimeError("division by zero")
             return left % right
 
         if op == "==":
@@ -1372,6 +1381,19 @@ class Interpreter:
             return float(s)
         except ValueError:
             raise RuntimeError(f"parse_f64: cannot parse '{s}' as f64")
+
+    def builtin_checked_div(self, args):
+        """Safe division: returns Ok(result) or Err("division by zero").
+        checked_div(a, b) -> Result<i32, string>
+        """
+        if len(args) < 2:
+            raise RuntimeError("checked_div expects 2 arguments")
+        a, b = args[0], args[1]
+        if b == 0:
+            return {'__result_tag__': 'err', 'value': 'division by zero'}
+        if isinstance(a, float) or isinstance(b, float):
+            return {'__result_tag__': 'ok', 'value': a / b}
+        return {'__result_tag__': 'ok', 'value': a // b}
 
     def format_string(self, args):
         """Format string with placeholder substitution.
