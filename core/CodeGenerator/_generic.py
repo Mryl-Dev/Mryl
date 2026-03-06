@@ -236,6 +236,18 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                         return t
             return "i32"
 
+        if expr_class == "EnumVariantExpr":
+            # TypeName::member が static fn ならその戻り値型を返す
+            for struct in self.structs:
+                if struct.name == expr.enum_name:
+                    method = next(
+                        (m for m in struct.methods if m.name == expr.variant_name and getattr(m, 'is_static', False)),
+                        None
+                    )
+                    if method and method.return_type:
+                        return method.return_type.name
+            return expr.enum_name  # enum variant の場合は enum 名を型とする
+
         return "i32"
 
     def _scan_generic_calls(self, block):

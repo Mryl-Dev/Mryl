@@ -523,6 +523,6 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         obj         = self._generate_expr(expr.obj)
         args_list   = [self._generate_expr(arg) for arg in expr.args]
         struct_name = obj_type   # Bug#27: obj の型から struct 名を解決
-        all_args    = [f"&({obj})"] + args_list   # Bug#28: ポインタ渡し
+        all_args    = [f"&{obj}"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
 

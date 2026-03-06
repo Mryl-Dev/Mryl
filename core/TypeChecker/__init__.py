@@ -181,11 +181,20 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         self.env = [{}]
         saved_fix_vars = self.fix_vars
         self.fix_vars = set()
-        method.params[0].type_node = TypeNode(struct.name)  # self パラメータの型を解決
-        for p in method.params:
-            self.env[-1][p.name] = p.type_node
-            if getattr(p, 'is_fix', False):
-                self.fix_vars.add(p.name)
+
+        if getattr(method, 'is_static', False):
+            # static fn: self パラメータなし。self を使ったら TypeError
+            for p in method.params:
+                if p.name == 'self':
+                    from MrylError import TypeError_
+                    raise TypeError_("static fn cannot have 'self' parameter", p)
+                self.env[-1][p.name] = p.type_node
+        else:
+            method.params[0].type_node = TypeNode(struct.name)  # self パラメータの型を解決
+            for p in method.params:
+                self.env[-1][p.name] = p.type_node
+                if getattr(p, 'is_fix', False):
+                    self.fix_vars.add(p.name)
         try:
             self.check_block(method.body, method.return_type)
         finally:

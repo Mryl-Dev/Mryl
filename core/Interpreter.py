@@ -811,6 +811,10 @@ class Interpreter:
                 if isinstance(maybe_lambda, dict) and maybe_lambda.get('__lambda__'):
                     args = [self.eval_expr(a, env) for a in expr.args]
                     return self.call_lambda(maybe_lambda, args)
+                # static fn 参照（Python callable）が変数に格納されている場合
+                if callable(maybe_lambda):
+                    args = [self.eval_expr(a, env) for a in expr.args]
+                    return maybe_lambda(*args)
             except RuntimeError:
                 pass  # Not a variable, fall through to normal function call
 
@@ -861,7 +865,48 @@ class Interpreter:
             raise RuntimeError("await: expression is not a Future")
 
         if isinstance(expr, EnumVariantExpr):
-            # Create enum value: {__enum__: EnumName, __variant__: VariantName, __data__: [...]}
+            # TypeName::member が static fn 呼び出し/参照 か enum variant かを判定
+            struct = self.structs.get(expr.enum_name)
+            if struct:
+                method = next(
+                    (m for m in struct.methods if m.name == expr.variant_name and getattr(m, 'is_static', False)),
+                    None
+                )
+                if method:
+                    if expr.has_parens:
+                        # TypeName::method(args) — static fn 呼び出し
+                        args_eval = [self.eval_expr(a, env) for a in expr.args]
+                        new_env = {}
+                        for param, val in zip(method.params, args_eval):
+                            new_env[param.name] = val
+                        self.env.append(new_env)
+                        try:
+                            for stmt in method.body.statements:
+                                self.exec_stmt(stmt, self.env)
+                        except ReturnSignal as ret:
+                            return ret.value
+                        finally:
+                            self.env.pop()
+                        return None
+                    else:
+                        # TypeName::method — fn 型変数への参照（クロージャ相当）
+                        def _make_static_ref(m, interp):
+                            def _call(*args_eval):
+                                new_env = {}
+                                for param, val in zip(m.params, args_eval):
+                                    new_env[param.name] = val
+                                interp.env.append(new_env)
+                                try:
+                                    for stmt in m.body.statements:
+                                        interp.exec_stmt(stmt, interp.env)
+                                except ReturnSignal as ret:
+                                    return ret.value
+                                finally:
+                                    interp.env.pop()
+                                return None
+                            return _call
+                        return _make_static_ref(method, self)
+            # enum variant: {__enum__: EnumName, __variant__: VariantName, __data__: [...]}
             data = [self.eval_expr(a, env) for a in expr.args]
             return {'__enum__': expr.enum_name, '__variant__': expr.variant_name, '__data__': data}
 

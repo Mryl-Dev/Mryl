@@ -85,6 +85,23 @@ class TypeCheckerExprMixin:
             return self.check_lambda(expr)
 
         if isinstance(expr, EnumVariantExpr):
+            # TypeName::member が static fn の呼び出し/参照か enum variant かを判定する
+            struct = self.structs.get(expr.enum_name)
+            if struct:
+                # struct の static fn を探す
+                method = next(
+                    (m for m in struct.methods if m.name == expr.variant_name and getattr(m, 'is_static', False)),
+                    None
+                )
+                if method:
+                    if expr.has_parens:
+                        # TypeName::method(args) — 呼び出し、戻り値型を返す
+                        return method.return_type if method.return_type else TypeNode("void")
+                    else:
+                        # TypeName::method — fn 型変数への参照
+                        param_types = [p.type_node for p in method.params]
+                        ret_type    = method.return_type if method.return_type else TypeNode("void")
+                        return TypeNode("fn", type_args=param_types + [ret_type])
             return TypeNode(expr.enum_name)
 
         if isinstance(expr, MatchExpr):

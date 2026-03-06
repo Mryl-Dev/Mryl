@@ -36,13 +36,14 @@ class StructField(AST):
 
 class MethodDecl(AST):
     """Method declaration within Rust-style impl block"""
-    def __init__(self, name, params, return_type, body, type_params=None, line=None, column=None):
+    def __init__(self, name, params, return_type, body, type_params=None, is_static=False, line=None, column=None):
         super().__init__(line, column)
         self.name = name
-        self.params = params            # list of Param (first param is self)
+        self.params = params            # list of Param (first param may be self, or empty for static)
         self.return_type = return_type
         self.body = body
         self.type_params = type_params or []
+        self.is_static = is_static      # True for static fn declarations
 
 # ============================================================
 # Function: Function declaration and parameters
@@ -310,12 +311,16 @@ class EnumDecl(AST):
         self.variants = variants     # list of EnumVariant
 
 class EnumVariantExpr(Expr):
-    """Enum variant construction expression: EnumName::VariantName  or  EnumName::VariantName(args)"""
-    def __init__(self, enum_name, variant_name, args=None, line=None, column=None):
+    """Enum variant construction expression: EnumName::VariantName  or  EnumName::VariantName(args)
+    Also used for static method call/reference: TypeName::method(args)  or  TypeName::method
+    has_parens=True means () was explicitly written (call site), False means no parentheses (reference).
+    """
+    def __init__(self, enum_name, variant_name, args=None, line=None, column=None, has_parens=False):
         super().__init__(line, column)
         self.enum_name = enum_name
         self.variant_name = variant_name
         self.args = args or []       # list of Expr (one per payload field)
+        self.has_parens = has_parens # True if () was written (call), False if no parens (reference)
 
 # ============================================================
 # Match: match expression nodes

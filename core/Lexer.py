@@ -105,6 +105,9 @@ class TokenKind(Enum):
     MATCH = auto()       # match keyword (reserved for future use)
     DOUBLE_COLON = auto()  # ::
 
+    # Static
+    STATIC = auto()      # static keyword
+
     EOF = auto()
 
 class Token:
@@ -139,6 +142,7 @@ class Lexer:
         "await": TokenKind.AWAIT,
         "enum":  TokenKind.ENUM,
         "match": TokenKind.MATCH,
+        "static": TokenKind.STATIC,
     }
 
     def __init__(self, source: str):

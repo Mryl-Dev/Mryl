@@ -412,6 +412,7 @@ class CodeGenerator(
     def _generate_method(self, struct_name: str, method, type_subst: dict = None):
         """構造体メソッドから C コードを生成する。
         type_subst: ジェネリック型置換辞書 (例: {"T": "string"})
+        is_static=True の場合は self なし通常関数として生成する。
         """
         func_name   = f"{struct_name}_{method.name}"
 
@@ -424,7 +425,15 @@ class CodeGenerator(
 
         return_type = self._type_to_c(resolve_type(method.return_type))
 
-        if method.params and method.params[0].name == "self":
+        if getattr(method, 'is_static', False):
+            # static fn: self なし、通常関数として生成
+            param_strs = [
+                f"{self._type_to_c(resolve_type(p.type_node))} {p.name}"
+                for p in method.params
+            ]
+            self_type    = None
+            other_params = method.params
+        elif method.params and method.params[0].name == "self":
             self_type    = struct_name
             other_params = method.params[1:]
             param_strs   = [f"{self_type}* self"]   # Bug#28: ポインタ渡し

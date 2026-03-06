@@ -97,6 +97,20 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     self.env[-1][stmt.name] = "fn"
             return
 
+        # static fn 参照（has_parens=False の EnumVariantExpr）を fn 型変数として宣言
+        if init_expr_class == "EnumVariantExpr" and not stmt.init_expr.has_parens:
+            if type_node and type_node.name == "fn" and getattr(type_node, 'type_args', None):
+                ret_t      = self._type_to_c(type_node.type_args[-1])
+                arg_types  = [self._type_to_c(t) for t in type_node.type_args[:-1]]
+                args_str   = ", ".join(arg_types) if arg_types else "void"
+                c_var_name = _safe_c_name(stmt.name)
+                if c_var_name != stmt.name:
+                    self.ident_renames[stmt.name] = c_var_name
+                c_func = self._generate_expr(stmt.init_expr)
+                self._emit(f"{ret_t} (*{c_var_name})({args_str}) = {c_func};")
+                self.env[-1][stmt.name] = "fn"
+                return
+
         # FunctionCall 引数の StringLiteral を一時変数化
         temp_string_mapping = {}
         if init_expr_class == "FunctionCall":

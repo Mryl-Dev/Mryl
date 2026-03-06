@@ -83,16 +83,43 @@ class CodeGeneratorStructMixin(_CodeGeneratorBase):
             self._emit("")
 
     def _generate_enum_variant_expr(self, expr) -> str:
-        """EnumVariantExpr を C 式文字列として返す """
-        enum_name    = expr.enum_name
-        variant_name = expr.variant_name
-        enum_decl    = self.enums.get(enum_name)
+        """EnumVariantExpr を C 式文字列として返す。
+        TypeName::method(args)  → C 関数呼び出し (static fn)
+        TypeName::method        → C 関数名 (fn 型変数への参照用)
+        EnumName::Variant(args) → タグ付き共用体コンストラクタ
+        """
+        type_name    = expr.enum_name
+        member_name  = expr.variant_name
+
+        # struct の static fn かを判定
+        struct_decl = None
+        for s in self.structs:
+            if s.name == type_name:
+                struct_decl = s
+                break
+
+        if struct_decl is not None:
+            method = next(
+                (m for m in struct_decl.methods if m.name == member_name and getattr(m, 'is_static', False)),
+                None
+            )
+            if method:
+                c_func = f"{type_name}_{member_name}"
+                if expr.has_parens:
+                    arg_strs = [self._generate_expr(a) for a in expr.args]
+                    return f"{c_func}({', '.join(arg_strs)})"
+                else:
+                    # 参照: C 関数名をそのまま返す（関数ポインタ代入用）
+                    return c_func
+
+        # enum variant (既存の処理)
+        enum_decl    = self.enums.get(type_name)
         has_data     = enum_decl and any(v.fields for v in enum_decl.variants)
 
         if has_data:
             arg_strs = [self._generate_expr(a) for a in expr.args]
-            return f"{enum_name}_{variant_name}({', '.join(arg_strs)})"
-        return f"{enum_name}_{variant_name}"
+            return f"{type_name}_{member_name}({', '.join(arg_strs)})"
+        return f"{type_name}_{member_name}"
 
     def _infer_struct_name(self, method_name) -> str:
         """メソッド名から所属する構造体名を推論する """

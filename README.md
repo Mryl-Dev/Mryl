@@ -1,4 +1,4 @@
-# Mryl プログラミング言語(v0.2.0) - 言語リファレンス
+# Mryl プログラミング言語(v0.3.0) - 言語リファレンス
 
 <p align="left">
   <img src="assets/icon_banner.svg" width="700" alt="Mryl banner"/>
@@ -25,16 +25,17 @@
 13. [async / await](#async--await)
 14. [ジェネリック](#ジェネリック)
 15. [構造体](#構造体)
-16. [enum（列挙型）](#enum列挙型)
-17. [match 式](#match-式)
-18. [Result 型とエラーハンドリング](#result-型とエラーハンドリング)
-19. [配列（固定長）](#配列固定長)
-20. [可変長配列（T[]）](#可変長配列t)
-21. [組み込み関数](#組み込み関数)
-22. [型推論](#型推論)
-23. [型チェック](#型チェック)
-24. [まとめ](#まとめ)
-25. [トラブルシューティング](#トラブルシューティング)
+16. [static fn（静的メソッド）](#static-fn静的メソッド)
+17. [enum（列挙型）](#enum列挙型)
+18. [match 式](#match-式)
+19. [Result 型とエラーハンドリング](#result-型とエラーハンドリング)
+20. [配列（固定長）](#配列固定長)
+21. [可変長配列（T[]）](#可変長配列t)
+22. [組み込み関数](#組み込み関数)
+23. [型推論](#型推論)
+24. [型チェック](#型チェック)
+25. [まとめ](#まとめ)
+26. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -1032,6 +1033,89 @@ p.display();
 let dist = p.distance();
 println("Distance: {}", dist);
 ```
+
+---
+
+## static fn（静的メソッド）
+
+`impl` ブロック内に `static fn` で宣言する**静的メソッド**です。インスタンスではなく型そのものに属するため、`self` パラメータを持ちません。
+
+### 宣言
+
+```mryl
+struct Counter {
+    value: i32;
+}
+
+impl Counter {
+    static fn zero() -> Counter {
+        return Counter { value: 0 };
+    }
+
+    static fn with_value(n: i32) -> Counter {
+        return Counter { value: n };
+    }
+
+    fn increment(self) {
+        self.value = self.value + 1;
+    }
+}
+```
+
+### 呼び出し構文
+
+`TypeName::method(args)` — `::` 演算子で呼び出します。
+
+```mryl
+fn main() -> i32 {
+    let c = Counter::zero();        // static fn 呼び出し
+    c.increment();                  // instance fn 呼び出し
+    println("{}", c.value);         // 1
+    return 0;
+}
+```
+
+### static fn 内から同 struct の他 static fn を呼ぶ
+
+```mryl
+impl Counter {
+    static fn default_max() -> i32 { return 100; }
+
+    static fn bounded() -> Counter {
+        let max = Counter::default_max();  // OK
+        return Counter { value: max };
+    }
+}
+```
+
+### fn 型変数への代入
+
+括弧なしの `TypeName::method` は `fn` 型変数として扱えます。
+
+```mryl
+// fn 型変数への代入
+let f: fn() -> Counter = Counter::zero;
+let c = f();
+
+// 高階関数への引数として渡す
+fn make(factory: fn() -> Counter) -> Counter {
+    return factory();
+}
+let c2 = make(Counter::zero);
+```
+
+### 制約
+
+- `static fn` 内で `self` を使用するとコンパイルエラー
+- `static let`（静的変数）は Mryl では非対応（`struct` で代替）
+
+### C コード生成
+
+| Mryl | 生成される C コード |
+|---|---|
+| `static fn zero() -> Counter` | `Counter Counter_zero()` |
+| `Counter::zero()` | `Counter_zero()` |
+| `Counter::zero`（参照） | `Counter_zero`（関数ポインタ） |
 
 ---
 

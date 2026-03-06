@@ -16,8 +16,9 @@
 7. [型システム](#型システム)
 8. [ジェネリック](#ジェネリック)
 9. [構造体とメソッド](#構造体とメソッド)
-10. [ラムダ式](#ラムダ式)
-11. [async / await](#async--await)
+10. [static fn（静的メソッド）](#static-fn静的メソッド)
+11. [ラムダ式](#ラムダ式)
+12. [async / await](#async--await)
 12. [制御フロー](#制御フロー)
 13. [メモリ管理](#メモリ管理)
 14. [入力関数](#入力関数)
@@ -113,7 +114,14 @@ Mryl/
 │   ├── test_13_boundary_numeric.ml  # 数値型境界値（C0・境界値分析）
 │   ├── test_14_branch_coverage.ml   # 条件分岐網羅（C0/C1/MC/DC）
 │   ├── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
-│   └── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
+│   ├── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
+   ├── test_17_higherorder.ml       # 高階関数
+   ├── test_18_string_ops.ml        # 文字列操作
+   ├── test_19_nested_struct.ml     # ネスト構造体
+   ├── test_20_callback.ml          # コールバック
+   ├── test_21_fix.ml               # fix キーワード
+   ├── test_22_input.ml             # read_line / parse_int / parse_f64
+   └── test_23_static.ml            # static fn / :: 呼び出し / StaticMethodRef
 ├── my/
 │   ├── test_async_lambda.ml          # async ラムダ式（基本）動作確認用
 │   ├── test_async_lambda_await.ml    # async ラムダ式（await 内包）動作確認用
@@ -226,7 +234,19 @@ Mryl/
 | 名前付き関数を渡す | `apply(my_func, 5)` — 定義済み関数を渡す |
 | C コード生成 | `型 (*cb)(パラメータ)` の関数ポインタ型 |
 
-### 3.9 前方宣言
+### 3.9 static fn（静的メソッド）
+
+| 機能 | 説明 |
+|------|------|
+| `static fn name(params) -> T` | impl ブロック内に宣言する静的メソッド |
+| `TypeName::method(args)` | 静的メソッド呼び出し（`::` 演算子） |
+| `TypeName::method` | fn 型変数への参照（括弧なし） |
+| `self` 禁止 | static fn 内で `self` を使用するとコンパイルエラー |
+| 同 struct の他 static fn 呼び出し | `Counter::other()` のように内部から呼び出し可能 |
+| C コード生成 | `StructName_method(params)`（self なし通常関数） |
+| fn 型変数への代入 | `Counter::zero` → C では `Counter_zero`（関数ポインタ） |
+
+### 3.10 前方宣言
 
 | 機能 | 説明 |
 |------|------|
@@ -234,7 +254,7 @@ Mryl/
 | 相互再帰 | `is_even` / `is_odd` のように互いを呼び合う関数の記述 |
 | C コード生成 | 関数定義の前にプロトタイプ宣言を出力 |
 
-### 3.10 string 操作
+### 3.11 string 操作
 
 | 機能 | 説明 |
 |------|------|
@@ -595,6 +615,61 @@ let d = p.distance();  // → Point_distance(p) に変換 → 7
 let pair = Pair { first: 10, second: 20 };
 let x = pair.get_first();  // → Pair_T_get_first(pair)
 ```
+
+---
+
+## static fn（静的メソッド）
+
+`impl` ブロック内に `static fn` で宣言するメソッド。インスタンスではなく型そのものに属するため、`self` パラメータを持たない。
+
+### 宣言と呼び出し
+
+```mryl
+struct Counter {
+    value: i32;
+}
+
+impl Counter {
+    static fn zero() -> Counter {
+        return Counter { value: 0 };
+    }
+
+    static fn with_value(n: i32) -> Counter {
+        return Counter { value: n };
+    }
+
+    fn increment(self) {
+        self.value = self.value + 1;
+    }
+}
+
+fn main() -> i32 {
+    let c = Counter::zero();     // static fn 呼び出し
+    c.increment();               // instance fn 呼び出し
+    println("{}", c.value);      // 1
+    return 0;
+}
+```
+
+### fn 型変数への参照
+
+```mryl
+let f: fn() -> Counter = Counter::zero;   // 括弧なし = 参照
+let c = f();
+
+fn make(factory: fn() -> Counter) -> Counter {
+    return factory();
+}
+let c2 = make(Counter::zero);             // コールバックとして渡す
+```
+
+### C コード変換
+
+| Mryl | 生成 C コード |
+|---|---|
+| `static fn zero() -> Counter` 宣言 | `Counter Counter_zero()` |
+| `Counter::zero()` | `Counter_zero()` |
+| `Counter::zero`（参照） | `Counter_zero`（関数ポインタ） |
 
 ---
 

@@ -174,10 +174,44 @@ class Parser:
             if self.current.kind == TokenKind.FN:
                 method = self.parse_method_decl()
                 struct.methods.append(method)
+            elif self.current.kind == TokenKind.STATIC:
+                self.advance()  # consume 'static'
+                method = self.parse_static_method_decl()
+                struct.methods.append(method)
             else:
-                raise SyntaxError_("Expected fn in impl block", self.current)
+                raise SyntaxError_("Expected fn or static fn in impl block", self.current)
 
         self.expect(TokenKind.RBRACE)
+
+    def parse_static_method_decl(self):
+        """Parse static fn method_name(params) -> ReturnType { ... }
+        'static' keyword has already been consumed by parse_impl_decl.
+        No 'self' parameter.
+        """
+        self.expect(TokenKind.FN)
+        name_tok = self.current
+        name = self.expect(TokenKind.IDENT).value
+        line, col = name_tok.line, name_tok.column
+
+        self.expect(TokenKind.LPAREN)
+        params = []
+        while self.current.kind != TokenKind.RPAREN:
+            if self.current.kind == TokenKind.IDENT and self.current.value == "self":
+                raise SyntaxError_("static fn cannot have 'self' parameter", self.current)
+            pname = self.expect(TokenKind.IDENT).value
+            self.expect(TokenKind.COLON)
+            ptype = self.parse_type()
+            params.append(Param(pname, ptype, line, col))
+            if not self.match(TokenKind.COMMA):
+                break
+        self.expect(TokenKind.RPAREN)
+
+        return_type = TypeNode("void")
+        if self.match(TokenKind.ARROW):
+            return_type = self.parse_type()
+
+        body = self.parse_block()
+        return MethodDecl(name, params, return_type, body, is_static=True, line=line, column=col)
 
     def parse_method_decl(self):
         """Parse fn method_name(self, ...) -> ReturnType { ... }"""
@@ -1291,16 +1325,18 @@ class Parser:
                 self.expect(TokenKind.RBRACE)
                 return StructInit(ident, type_params, fields, line, col)
 
-        # Enum variant: EnumName::VariantName  or  EnumName::VariantName(args)
+        # Enum variant / Static method: TypeName::member  or  TypeName::member(args)
         if self.current.kind == TokenKind.DOUBLE_COLON:
             self.advance()  # consume ::
             variant_name = self.current.value
             self.expect(TokenKind.IDENT)
             args = []
+            has_parens = False
             if self.match(TokenKind.LPAREN):
+                has_parens = True
                 args = self.parse_args()
                 self.expect(TokenKind.RPAREN)
-            return EnumVariantExpr(ident, variant_name, args, line, col)
+            return EnumVariantExpr(ident, variant_name, args, line, col, has_parens=has_parens)
 
         return VarRef(ident, line, col)
 
