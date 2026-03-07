@@ -1,8 +1,8 @@
 ﻿// ============================================================
 // Test 11: 組み込み関数 (print / println / to_string)
 //   A. print (改行なし)
-//   B. println (型ごと: i32 / f64 / string / bool)
-//   C. println フォーマット文字列 (1引数 / 複数引数)
+//   B. println (型ごと: i32 / f64 / string / bool / i64 / u32 / u64)
+//   C. println フォーマット文字列 (1引数 / 複数引数 / BinaryOp 混合型昇格)
 //   D. to_string (i32 / f64 / bool)
 //   E. to_string 結果を使った条件分岐 - C1 + MC/DC
 //
@@ -51,6 +51,14 @@ fn main() -> i32 {
     println(true);                        // true
     println(false);                       // false
 
+    // i64 / u32 / u64 直接 println (Bug#48 regression: %lld/%u/%llu)
+    let li: i64 = 2147483648(i64);
+    println(li);                         // 2147483648
+    let uu: u32 = 2147483648(u32);
+    println(uu);                         // 2147483648
+    let lu: u64 = 2147483648(u64);
+    println(lu);                         // 2147483648
+
     // ----------------------------------------------------------
     // C. println フォーマット文字列 / C1: 引数数ごと
     // ----------------------------------------------------------
@@ -80,6 +88,11 @@ fn main() -> i32 {
     let bb = 2;
     let cc = 3;
     println("{} {} {}", aa, bb, cc);     // 1 2 3
+
+    // BinaryOp 混合型昇格 (Bug#48 regression: i32+f64 → %g)
+    let mix_i: i32 = 1;
+    let mix_f: f64 = 0.5;
+    println("mixed={}", mix_i + mix_f);  // mixed=1.5
 
     // ----------------------------------------------------------
     // D. to_string / C1: 型ごと

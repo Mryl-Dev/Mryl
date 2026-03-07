@@ -149,6 +149,13 @@ fn main() -> i32 {
     let sv2: f64 = match sr2 { Ok(v) => v, Err(e) => -1.0 };
     println("sqrt(-4)={}", sv2);      // -1
 
+    // C2. match アーム内で直接 f64 を println (Bug#48 regression)
+    let sr3 = safe_sqrt(4.0);
+    match sr3 {
+        Ok(v)  => println("sqrt4={}", v),   // sqrt4=2
+        Err(e) => println("sqrt4=err"),
+    };
+
     // ----------------------------------------------------------
     // MC/DC: safe_divide (a < 0 || b == 0)
     // ----------------------------------------------------------
