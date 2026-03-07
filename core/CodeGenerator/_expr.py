@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re as _re
 from Ast import BindingPattern, EnumPattern, StructPattern
 from CodeGenerator._util import _safe_c_name
 from CodeGenerator._proto import _CodeGeneratorBase
@@ -51,9 +52,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 if op == "+":
                     return f"mryl_string_concat({left}, {right})"
                 if op == "==":
-                    return f"(strcmp(({left}).data, ({right}).data) == 0)"
+                    return f"(strcmp({self._strip_outer_parens(left)}.data, {self._strip_outer_parens(right)}.data) == 0)"
                 if op == "!=":
-                    return f"(strcmp(({left}).data, ({right}).data) != 0)"
+                    return f"(strcmp({self._strip_outer_parens(left)}.data, {self._strip_outer_parens(right)}.data) != 0)"
             # ゼロ除算チェック: 整数 / と % はランタイムチェック付きヘルパーに変換
             if op in ("/", "%") and left_type not in ("f32", "f64") and right_type not in ("f32", "f64"):
                 helper = "mryl_safe_div" if op == "/" else "mryl_safe_mod"
@@ -301,7 +302,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         scrutinee_c         = self._generate_expr(expr.scrutinee)
         scrutinee_type      = self._infer_expr_type(expr.scrutinee)
         scrutinee_is_string = (scrutinee_type == "string")
-        result_c_type       = self._infer_match_result_c_type(expr.arms)
+        result_c_type       = self._infer_match_result_c_type(expr.arms, scrutinee_type)
 
         zero_val = (
             '""'               if result_c_type == "const char*" else
@@ -309,9 +310,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             "0"
         )
 
+        # 単純な識別子（例: `r`）や添字アクセス（`a.b`, `a[0]`）は括弧不要。
+        # 二項演算子を含む複合式（スペースや演算子が入る）は括弧で包む。
+        _simple_expr = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*$')
+        scrutinee_c_wrapped = scrutinee_c if _simple_expr.match(scrutinee_c) else f"({scrutinee_c})"
+
         lines = [
             "({",
-            f"    __auto_type {mv} = ({scrutinee_c});",
+            f"    __auto_type {mv} = {scrutinee_c_wrapped};",
             f"    {result_c_type} {mr} = {zero_val};",
         ]
 
@@ -368,8 +374,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         lines.append("})")
         return "\n".join(lines)
 
-    def _infer_match_result_c_type(self, arms) -> str:
-        """match 式のアーム群から結果の C 型を推論する """
+    def _infer_match_result_c_type(self, arms, scrutinee_type: str = "") -> str:
+        """match 式のアーム群から結果の C 型を推論する。
+        全アームを走査して最も具体的な型を選ぶ（double > int32_t）。"""
+        candidates = []
         for arm in arms:
             if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
                 continue
@@ -381,7 +389,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return "MrylString"
             c = self._type_to_c_base(t)
             if c not in ("any", ""):
-                return c
+                candidates.append(c)
+        # double が1つでもあれば double を採用（int32_t より具体的）
+        if "double" in candidates:
+            return "double"
+        if candidates:
+            return candidates[0]
         return "int32_t"
 
     def _pattern_binding_types(self, pattern) -> dict:

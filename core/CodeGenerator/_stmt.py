@@ -35,7 +35,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         elif stmt_class == "Assignment":
             target = self._generate_expr(stmt.target)
             value  = self._generate_expr(stmt.expr)
-            self._emit(f"{target} = {value};")
+            self._emit(f"{target} = {self._strip_outer_parens(value)};")
         elif stmt_class == "ConditionalBlock":
             self._generate_conditional_block(stmt)
         else:
@@ -187,7 +187,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 else:
                     c = self._type_to_c_base(inferred_mryl)
                     var_type = c if c not in ("any", "") else "int32_t"
-            self._emit(f"{var_type} {stmt.name} = {init_expr};")
+            self._emit(f"{var_type} {stmt.name} = {self._strip_outer_parens(init_expr)};")
             if type_node:
                 # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
                 mryl_name = type_node.name
@@ -228,7 +228,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             return
 
         # 通常の scalar / struct 型
-        self._emit(f"const {var_type} {stmt.name} = {init_expr};")
+        self._emit(f"const {var_type} {stmt.name} = {self._strip_outer_parens(init_expr)};")
         if type_node:
             mryl_name = type_node.name
             if getattr(type_node, 'type_args', None):
@@ -294,7 +294,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     # パラメータの場合: 呼び元が引数の所有権を持つのでコピーだけ返す
                     self._emit(f"return make_mryl_string({expr_code}.data);")
             else:
-                self._emit(f"return {expr_code};")
+                self._emit(f"return {self._strip_outer_parens(expr_code)};")
         else:
             self._emit("return;")
 

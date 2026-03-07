@@ -242,29 +242,44 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
-        self._emit("static int32_t parse_int(MrylString s) {")
+        # parse_int / parse_f64: return Result<T, string>  (#42)
+        self.result_type_registry.add(('int32_t', 'MrylString', 'MrylResult_int32_t_MrylString'))
+        self.result_type_registry.add(('double',  'MrylString', 'MrylResult_double_MrylString'))
+        self._emit("// parse_int(s) -> MrylResult_int32_t_MrylString")
+        self._emit("static MrylResult_int32_t_MrylString parse_int(MrylString s) {")
         self.indent_level += 1
+        self._emit("MrylResult_int32_t_MrylString __r;")
         self._emit("char* __end;")
         self._emit("long __v = strtol(s.data, &__end, 10);")
         self._emit("if (__end == s.data || *__end != '\\0') {")
         self.indent_level += 1
-        self._emit("mryl_panic(\"ParseError\", \"cannot parse string as i32\", __func__, __FILE__, __LINE__);")
+        self._emit("__r.is_ok = 0;")
+        self._emit("__r.data.err_val = make_mryl_string(\"cannot parse string as i32\");")
+        self._emit("return __r;")
         self.indent_level -= 1
         self._emit("}")
-        self._emit("return (int32_t)__v;")
+        self._emit("__r.is_ok = 1;")
+        self._emit("__r.data.ok_val = (int32_t)__v;")
+        self._emit("return __r;")
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
-        self._emit("static double parse_f64(MrylString s) {")
+        self._emit("// parse_f64(s) -> MrylResult_double_MrylString")
+        self._emit("static MrylResult_double_MrylString parse_f64(MrylString s) {")
         self.indent_level += 1
+        self._emit("MrylResult_double_MrylString __r;")
         self._emit("char* __end;")
         self._emit("double __v = strtod(s.data, &__end);")
         self._emit("if (__end == s.data || *__end != '\\0') {")
         self.indent_level += 1
-        self._emit("mryl_panic(\"ParseError\", \"cannot parse string as f64\", __func__, __FILE__, __LINE__);")
+        self._emit("__r.is_ok = 0;")
+        self._emit("__r.data.err_val = make_mryl_string(\"cannot parse string as f64\");")
+        self._emit("return __r;")
         self.indent_level -= 1
         self._emit("}")
-        self._emit("return __v;")
+        self._emit("__r.is_ok = 1;")
+        self._emit("__r.data.ok_val = __v;")
+        self._emit("return __r;")
         self.indent_level -= 1
         self._emit("}")
         self._emit("")

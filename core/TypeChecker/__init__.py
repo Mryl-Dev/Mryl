@@ -66,14 +66,14 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         self.functions["parse_int"] = FunctionDecl(
             name="parse_int",
             params=[Param("s", TypeNode("string"))],
-            return_type=TypeNode("i32"),
+            return_type=TypeNode("Result", type_args=[TypeNode("i32"), TypeNode("string")]),
             body=None,
             type_params=[]
         )
         self.functions["parse_f64"] = FunctionDecl(
             name="parse_f64",
             params=[Param("s", TypeNode("string"))],
-            return_type=TypeNode("f64"),
+            return_type=TypeNode("Result", type_args=[TypeNode("f64"), TypeNode("string")]),
             body=None,
             type_params=[]
         )

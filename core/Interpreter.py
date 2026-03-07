@@ -1363,24 +1363,24 @@ class Interpreter:
         return input()
 
     def builtin_parse_int(self, args):
-        """Parse a string to i32. Panics if the string is not a valid integer."""
+        """Parse a string to Result<i32, string>. Returns Ok(v) or Err(msg)."""
         if len(args) < 1:
             raise RuntimeError("parse_int expects 1 argument")
         s = str(args[0]).strip()
         try:
-            return int(s)
+            return {'__result_tag__': 'ok', 'value': int(s)}
         except ValueError:
-            raise RuntimeError(f"parse_int: cannot parse '{s}' as i32")
+            return {'__result_tag__': 'err', 'value': f"cannot parse '{s}' as i32"}
 
     def builtin_parse_f64(self, args):
-        """Parse a string to f64. Panics if the string is not a valid float."""
+        """Parse a string to Result<f64, string>. Returns Ok(v) or Err(msg)."""
         if len(args) < 1:
             raise RuntimeError("parse_f64 expects 1 argument")
         s = str(args[0]).strip()
         try:
-            return float(s)
+            return {'__result_tag__': 'ok', 'value': float(s)}
         except ValueError:
-            raise RuntimeError(f"parse_f64: cannot parse '{s}' as f64")
+            return {'__result_tag__': 'err', 'value': f"cannot parse '{s}' as f64"}
 
     def builtin_checked_div(self, args):
         """Safe division: returns Ok(result) or Err("division by zero").

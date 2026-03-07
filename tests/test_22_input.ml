@@ -26,7 +26,11 @@ fn main() -> i32 {
     // ----------------------------------------------------------
     println("--- B: parse_int ---");
     let b_s: string = read_line();
-    let b_n: i32    = parse_int(b_s);
+    let b_r = parse_int(b_s);
+    let b_n: i32 = match b_r {
+        Ok(v)  => v,
+        Err(e) => -1,
+    };
     println("int={}", b_n);
     println("int+1={}", b_n + 1);
 
@@ -35,7 +39,11 @@ fn main() -> i32 {
     // ----------------------------------------------------------
     println("--- C: parse_f64 ---");
     let c_s: string = read_line();
-    let c_f: f64    = parse_f64(c_s);
+    let c_r = parse_f64(c_s);
+    let c_f: f64 = match c_r {
+        Ok(v)  => v,
+        Err(e) => -1.0,
+    };
     println("f64={}", c_f);
     println("f64*2={}", c_f * 2.0);
 
@@ -45,8 +53,16 @@ fn main() -> i32 {
     println("--- D: combined ---");
     let d_s1: string = read_line();
     let d_s2: string = read_line();
-    let d_n: i32     = parse_int(d_s1);
-    let d_f: f64     = parse_f64(d_s2);
+    let d_r1 = parse_int(d_s1);
+    let d_n: i32 = match d_r1 {
+        Ok(v)  => v,
+        Err(e) => -1,
+    };
+    let d_r2 = parse_f64(d_s2);
+    let d_f: f64 = match d_r2 {
+        Ok(v)  => v,
+        Err(e) => -1.0,
+    };
     println("sum={}", d_n + 1);
     println("prod={}", d_f * 3.0);
 

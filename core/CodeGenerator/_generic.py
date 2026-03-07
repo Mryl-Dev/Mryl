@@ -129,8 +129,8 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             _builtin_return_types = {
                 "to_string": "string",
                 "read_line": "string",
-                "parse_int": "i32",
-                "parse_f64": "f64",
+                "parse_int": "Result",
+                "parse_f64": "Result",
             }
             if expr.name in _builtin_return_types:
                 return _builtin_return_types[expr.name]
