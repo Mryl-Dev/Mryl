@@ -275,8 +275,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 arg_code = self._generate_expr(first_arg)
                 return f'{expr.name}("%s", ({arg_code} ? "true" : "false"))'
             else:
+                # i64→%lld / u64→%llu / u32→%u / i32→%d など
+                fmt      = self._type_to_fmt_spec(first_arg)
                 arg_code = self._generate_expr(first_arg)
-                return f'{expr.name}("%d", {arg_code})'
+                return f'{expr.name}("{fmt}", {arg_code})'
 
     def _generate_struct_init(self, expr) -> str:
         """StructInit を C99 Compound literal として返す """
@@ -303,6 +305,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         scrutinee_type      = self._infer_expr_type(expr.scrutinee)
         scrutinee_is_string = (scrutinee_type == "string")
         result_c_type       = self._infer_match_result_c_type(expr.arms, scrutinee_type)
+        match_is_void       = (result_c_type == "void")
 
         zero_val = (
             '""'               if result_c_type == "const char*" else
@@ -315,11 +318,20 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         _simple_expr = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*$')
         scrutinee_c_wrapped = scrutinee_c if _simple_expr.match(scrutinee_c) else f"({scrutinee_c})"
 
+        # インデントレベルに基づいてスペースを計算する。
+        # ind0: 閉じ } の位置 (indent_level と同列)
+        # ind1: __auto_type / if / __mr0; などブロック直下
+        # ind2: if ブロック内の bindings / body
+        ind0 = "    " * self.indent_level
+        ind1 = "    " * (self.indent_level + 1)
+        ind2 = "    " * (self.indent_level + 2)
+
         lines = [
             "({",
-            f"    __auto_type {mv} = {scrutinee_c_wrapped};",
-            f"    {result_c_type} {mr} = {zero_val};",
+            f"{ind1}__auto_type {mv} = {scrutinee_c_wrapped};",
         ]
+        if not match_is_void:
+            lines.append(f"{ind1}{result_c_type} {mr} = {zero_val};")
 
         has_catch_all = False
         first = True
@@ -330,12 +342,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             if klass == "BindingPattern" and pattern.name == "_":
                 has_catch_all = True
                 kw = "else" if not first else ""
-                lines.append(f"    {kw} {{" if kw else "    {")
+                lines.append(f"{ind1}{kw} {{" if kw else f"{ind1}{{")
                 lines.append(
-                    f'        mryl_panic("MatchError", "reached \'_\' error arm", '
+                    f'{ind2}mryl_panic("MatchError", "reached \'_\' error arm", '
                     f'__func__, __FILE__, __LINE__);'
                 )
-                lines.append("    }")
+                lines.append(f"{ind1}}}")
                 first = False
                 continue
 
@@ -351,45 +363,62 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 kw        = "else if" if not first else "if"
                 cond_part = f" ({cond})"
             if kw:
-                lines.append(f"    {kw}{cond_part} {{")
+                lines.append(f"{ind1}{kw}{cond_part} {{")
             else:
-                lines.append("    {")
+                lines.append(f"{ind1}{{")
             for b in bindings:
-                lines.append(f"        {b}")
-            body_c = self._generate_expr(arm.body)
-            lines.append(f"        {mr} = {body_c};")
-            lines.append("    }")
+                lines.append(f"{ind2}{b}")
+            # binding 変数を env に登録してから body を生成する（型推論に必要）
+            _arm_scope = self._pattern_binding_types(arm.pattern, scrutinee_type)
+            self.env.append(_arm_scope)
+            body_c      = self._generate_expr(arm.body)
+            body_is_void = (self._infer_expr_type(arm.body) == "void")
+            self.env.pop()
+            if body_is_void:
+                lines.append(f"{ind2}{body_c};")
+            else:
+                lines.append(f"{ind2}{mr} = {body_c};")
+            lines.append(f"{ind1}}}")
             first = False
 
         if not has_catch_all:
             kw = "else" if len(expr.arms) > 0 else ""
-            lines.append(f"    {kw} {{" if kw else "    {")
+            lines.append(f"{ind1}{kw} {{" if kw else f"{ind1}{{")
             lines.append(
-                f'        mryl_panic("MatchError", "no arm matched", '
+                f'{ind2}mryl_panic("MatchError", "no arm matched", '
                 f'__func__, __FILE__, __LINE__);'
             )
-            lines.append("    }")
+            lines.append(f"{ind1}}}")
 
-        lines.append(f"    {mr};")
-        lines.append("})")
+        if not match_is_void:
+            lines.append(f"{ind1}{mr};")
+        lines.append(f"{ind0}}})")
         return "\n".join(lines)
 
     def _infer_match_result_c_type(self, arms, scrutinee_type: str = "") -> str:
         """match 式のアーム群から結果の C 型を推論する。
-        全アームを走査して最も具体的な型を選ぶ（double > int32_t）。"""
+        全アームを走査して最も具体的な型を選ぶ（double > int32_t）。
+        全アームが void の場合は "void" を返す。"""
         candidates = []
+        has_non_wildcard = False
         for arm in arms:
             if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
                 continue
-            scope = self._pattern_binding_types(arm.pattern)
+            has_non_wildcard = True
+            scope = self._pattern_binding_types(arm.pattern, scrutinee_type)
             self.env.append(scope)
             t = self._infer_expr_type(arm.body)
             self.env.pop()
             if t == "string":
                 return "MrylString"
+            if t == "void":
+                continue  # void アームは candidates に加えない
             c = self._type_to_c_base(t)
             if c not in ("any", ""):
                 candidates.append(c)
+        # 全アームが void → match 式全体も void
+        if not candidates and has_non_wildcard:
+            return "void"
         # double が1つでもあれば double を採用（int32_t より具体的）
         if "double" in candidates:
             return "double"
@@ -397,9 +426,21 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             return candidates[0]
         return "int32_t"
 
-    def _pattern_binding_types(self, pattern) -> dict:
-        """パターンのバインディング変数とその型のマップを返す """
+    def _pattern_binding_types(self, pattern, scrutinee_type: str = "") -> dict:
+        """パターンのバインディング変数とその型のマップを返す。
+        scrutinee_type: スクルティニーの型（"Result_i32", "Result_f64" 等）。
+        Ok(v)/Err(e) の binding 型を解決するのに使用する。"""
         if isinstance(pattern, EnumPattern):
+            # Ok(v) / Err(e) は Result 系の組み込みパターンとして特別扱い
+            if pattern.enum_name == "Ok" and pattern.bindings:
+                ok_type = "i32"
+                if scrutinee_type.startswith("Result_"):
+                    ok_part = scrutinee_type[len("Result_"):]
+                    # "f64_string" → "f64", "i32_string" → "i32", "f64" → "f64"
+                    ok_type = ok_part.split("_")[0] if "_" in ok_part else ok_part
+                return {pattern.bindings[0]: ok_type}
+            if pattern.enum_name == "Err" and pattern.bindings:
+                return {pattern.bindings[0]: "string"}
             enum_decl = self.enums.get(pattern.enum_name)
             if enum_decl:
                 variant = next(

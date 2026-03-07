@@ -189,11 +189,16 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     var_type = c if c not in ("any", "") else "int32_t"
             self._emit(f"{var_type} {stmt.name} = {self._strip_outer_parens(init_expr)};")
             if type_node:
-                # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
-                mryl_name = type_node.name
-                if getattr(type_node, 'type_args', None):
-                    suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
-                    mryl_name = f"{type_node.name}_{suffix}"
+                # Result<T, E> は "Result_T" 形式で env 登録する（_pattern_binding_types が ok_type を参照するため）
+                if type_node.name == "Result" and getattr(type_node, 'type_args', None):
+                    ok_name = type_node.type_args[0].name if type_node.type_args else "i32"
+                    mryl_name = f"Result_{ok_name}"
+                else:
+                    # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
+                    mryl_name = type_node.name
+                    if getattr(type_node, 'type_args', None):
+                        suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
+                        mryl_name = f"{type_node.name}_{suffix}"
                 self.env[-1][stmt.name] = mryl_name
                 if type_node.name == "string":
                     self.local_string_vars.append(stmt.name)
@@ -230,10 +235,15 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         # 通常の scalar / struct 型
         self._emit(f"const {var_type} {stmt.name} = {self._strip_outer_parens(init_expr)};")
         if type_node:
-            mryl_name = type_node.name
-            if getattr(type_node, 'type_args', None):
-                suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
-                mryl_name = f"{type_node.name}_{suffix}"
+            # Result<T, E> は "Result_T" 形式で env 登録する
+            if type_node.name == "Result" and getattr(type_node, 'type_args', None):
+                ok_name = type_node.type_args[0].name if type_node.type_args else "i32"
+                mryl_name = f"Result_{ok_name}"
+            else:
+                mryl_name = type_node.name
+                if getattr(type_node, 'type_args', None):
+                    suffix = "_".join(t if isinstance(t, str) else t.name for t in type_node.type_args)
+                    mryl_name = f"{type_node.name}_{suffix}"
             self.env[-1][stmt.name] = mryl_name
             # string は fix では所有権管理しない (const 文字列リテラルが多い想定)
         else:

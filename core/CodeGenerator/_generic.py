@@ -120,7 +120,16 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             return "i32"
 
         if expr_class == "BinaryOp":
-            return self._infer_expr_type(expr.left)
+            left_t  = self._infer_expr_type(expr.left)
+            right_t = self._infer_expr_type(expr.right)
+            if left_t == right_t:
+                return left_t
+            # 数値昇格: f64 > f32 > u64 > u32 > i64 > i32 > ...
+            _RANK = {"i8":1,"i16":2,"i32":3,"i64":4,
+                     "u8":5,"u16":6,"u32":7,"u64":8,"f32":9,"f64":10}
+            if left_t in _RANK and right_t in _RANK:
+                return left_t if _RANK[left_t] >= _RANK[right_t] else right_t
+            return left_t  # string 連結など
 
         if expr_class == "FunctionCall":
             if expr.name in ("Ok", "Err"):
@@ -129,14 +138,22 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             _builtin_return_types = {
                 "to_string": "string",
                 "read_line": "string",
-                "parse_int": "Result",
-                "parse_f64": "Result",
+                "parse_int": "Result_i32",
+                "parse_f64": "Result_f64",
+                "checked_div": "Result_i32",
+                "print": "void",
+                "println": "void",
             }
             if expr.name in _builtin_return_types:
                 return _builtin_return_types[expr.name]
             fn = self.program_functions.get(expr.name)
             if fn and fn.return_type:
                 if fn.return_type.name == "Result":
+                    # type_args が取れる場合は ok 型を付加する (例: "Result_f64")
+                    type_args = getattr(fn.return_type, 'type_args', None)
+                    if type_args:
+                        ok_name = type_args[0].name if hasattr(type_args[0], 'name') else str(type_args[0])
+                        return f"Result_{ok_name}"
                     return "Result"
                 # ジェネリック関数: 型引数を推論して戻り値型を解決 (#26)
                 if fn.type_params and fn.return_type.name in fn.type_params:
@@ -181,11 +198,12 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             return "i32"
 
         if expr_class == "MatchExpr":
+            _scrutinee_type = self._infer_expr_type(expr.scrutinee)
             for arm in expr.arms:
                 from Ast import BindingPattern
                 if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
                     continue
-                scope = self._pattern_binding_types(arm.pattern)
+                scope = self._pattern_binding_types(arm.pattern, _scrutinee_type)
                 self.env.append(scope)
                 t = self._infer_expr_type(arm.body)
                 self.env.pop()
@@ -195,7 +213,7 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                 from Ast import BindingPattern
                 if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
                     continue
-                scope = self._pattern_binding_types(arm.pattern)
+                scope = self._pattern_binding_types(arm.pattern, _scrutinee_type)
                 self.env.append(scope)
                 t = self._infer_expr_type(arm.body)
                 self.env.pop()

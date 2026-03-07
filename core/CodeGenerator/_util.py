@@ -38,6 +38,9 @@ class CodeGeneratorUtilMixin(_CodeGeneratorBase):
         s = s.strip()
         if len(s) < 2 or s[0] != '(' or s[-1] != ')':
             return s
+        # GCC compound statement expression ({ ... }) — 外側の括弧を除去しない
+        if s.startswith('({'):
+            return s
         depth = 0
         for i, c in enumerate(s):
             if c == '(':
