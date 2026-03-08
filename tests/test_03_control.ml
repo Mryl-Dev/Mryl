@@ -197,6 +197,34 @@ fn main() -> i32 {
     println("classify(0)={}", classify(0));        // 0  (早期 return)
     println("classify(3)={}", classify(3));        // 1  (通常 return)
 
+    // ----------------------------------------------------------
+    // G. 包含レンジ `to` (#10)
+    // ----------------------------------------------------------
+    println("--- G: inclusive range to ---");
+
+    // T03-G1: 0 to 4 → 0,1,2,3,4 の合計 = 10
+    let to_sum: i32 = 0;
+    for i in 0 to 4 {
+        to_sum = to_sum + i;
+    }
+    println("to_sum_0_4={}", to_sum);    // 10
+
+    // T03-G2: 1 to 1 → 1回だけ (境界値: 等値)
+    let to_one: i32 = 0;
+    for i in 1 to 1 {
+        to_one = to_one + i;
+    }
+    println("to_one={}", to_one);        // 1
+
+    // T03-G3: 変数を上限に使用
+    let lo: i32 = 3;
+    let hi: i32 = 6;
+    let to_var: i32 = 0;
+    for i in lo to hi {
+        to_var = to_var + i;
+    }
+    println("to_var_3_6={}", to_var);    // 18 (3+4+5+6)
+
     println("=== OK ===");
     return 0;
 }

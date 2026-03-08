@@ -984,15 +984,20 @@ class Parser:
         return node
 
     def parse_range(self):
-        """Parse range expressions: 0..10 or 0..=10 (exclusive upper bound by default)"""
+        """Parse range expressions: 0..10 (exclusive) or 0 to 10 (inclusive)"""
         node = self.parse_term()
 
         if self.current.kind == TokenKind.DOTDOT:
             tok = self.current
             self.advance()
             end = self.parse_term()
-            # Currently only supporting exclusive upper bound (..)
             node = Range(node, end, inclusive=False, line=tok.line, column=tok.column)
+
+        elif self.current.kind == TokenKind.TO:
+            tok = self.current
+            self.advance()
+            end = self.parse_term()
+            node = Range(node, end, inclusive=True, line=tok.line, column=tok.column)
 
         return node
 

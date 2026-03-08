@@ -108,6 +108,9 @@ class TokenKind(Enum):
     # Static
     STATIC = auto()      # static keyword
 
+    # Inclusive range keyword
+    TO = auto()          # to keyword
+
     EOF = auto()
 
 class Token:
@@ -143,6 +146,7 @@ class Lexer:
         "enum":  TokenKind.ENUM,
         "match": TokenKind.MATCH,
         "static": TokenKind.STATIC,
+        "to": TokenKind.TO,
     }
 
     def __init__(self, source: str):
