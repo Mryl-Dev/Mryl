@@ -157,6 +157,45 @@ fn main() -> i32 {
     // 境界値
     println("comb(0,0)={}", combine_check(0, 0));  // 0
 
+    // ----------------------------------------------------------
+    // F. string 組み込みメソッド (v0.3.0 #11)
+    // ----------------------------------------------------------
+    println("--- F: String methods ---");
+    let sm = "  Hello, World!  ";
+
+    // len
+    println("len(hello)={}", "hello".len());           // 5
+    let sr = "Mryl";
+    println("len(sr)={}", sr.len());                   // 4
+
+    // contains
+    println("contains(T)={}", sm.contains("World"));   // true
+    println("contains(F)={}", sm.contains("xyz"));     // false
+
+    // starts_with
+    println("sw(T)={}", "  Hello".starts_with("  ")); // true
+    println("sw(F)={}", "Hello".starts_with("Hi"));   // false
+
+    // ends_with
+    println("ew(T)={}", "test!".ends_with("!"));      // true
+    println("ew(F)={}", "test!".ends_with("?"));      // false
+
+    // trim
+    let trimmed = sm.trim();
+    println("trim={}", trimmed);                       // Hello, World!
+
+    // to_upper
+    let up = "hello".to_upper();
+    println("upper={}", up);                           // HELLO
+
+    // to_lower
+    let lo = "WORLD".to_lower();
+    println("lower={}", lo);                           // world
+
+    // replace
+    let rep = "foo bar foo".replace("foo", "baz");
+    println("replace={}", rep);                        // baz bar baz
+
     println("=== OK ===");
     return 0;
 }

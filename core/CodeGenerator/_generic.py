@@ -179,6 +179,14 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     if obj_t.startswith("Result_") and len(obj_t.split("_")) >= 3:
                         return obj_t.split("_", 2)[2]  # err 型
                     return "i32"
+            # string 組み込みメソッド
+            if obj_t == "string":
+                if expr.method == 'len':
+                    return "i32"
+                if expr.method in ('contains', 'starts_with', 'ends_with'):
+                    return "bool"
+                if expr.method in ('trim', 'to_upper', 'to_lower', 'replace'):
+                    return "string"
             # struct メソッドの戻り値型を検索 (#29/#30 正確な型推論)
             for struct in self.structs:
                 if struct.name == obj_t:

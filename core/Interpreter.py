@@ -1174,6 +1174,9 @@ class Interpreter:
         if isinstance(obj, list):
             return self._eval_array_method(obj, expr.method, args_eval)
 
+        if isinstance(obj, str):
+            return self._eval_string_method(obj, expr.method, args_eval)
+
         if isinstance(obj, dict) and '__result_tag__' in obj:
             return self._eval_result_method(obj, expr.method, args_eval)
 
@@ -1204,6 +1207,26 @@ class Interpreter:
             obj.insert(int(args_eval[0]), args_eval[1])
             return None
         raise RuntimeError(f"Unknown array method: {method}")
+
+    def _eval_string_method(self, obj: str, method: str, args_eval: list):
+        """string 型の組み込みメソッドを処理する。"""
+        if method == 'len':
+            return len(obj)
+        if method == 'contains':
+            return args_eval[0] in obj
+        if method == 'starts_with':
+            return obj.startswith(args_eval[0])
+        if method == 'ends_with':
+            return obj.endswith(args_eval[0])
+        if method == 'trim':
+            return obj.strip()
+        if method == 'to_upper':
+            return obj.upper()
+        if method == 'to_lower':
+            return obj.lower()
+        if method == 'replace':
+            return obj.replace(args_eval[0], args_eval[1])
+        raise RuntimeError(f"Unknown string method: {method}")
 
     def _eval_result_method(self, obj: dict, method: str, args_eval: list):
         """Result 型（Ok/Err）のメソッドを処理する。"""

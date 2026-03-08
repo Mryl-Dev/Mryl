@@ -97,6 +97,19 @@ class TypeCheckerCallMixin:
             else:
                 raise TypeError_(f"Dynamic array has no method '{expr.method}'", expr)
 
+        # string 型の組み込みメソッド
+        if obj_type.name == "string":
+            if expr.method == 'len':
+                return TypeNode('i32')
+            elif expr.method in ('contains', 'starts_with', 'ends_with'):
+                return TypeNode('bool')
+            elif expr.method in ('trim', 'to_upper', 'to_lower'):
+                return TypeNode('string')
+            elif expr.method == 'replace':
+                return TypeNode('string')
+            else:
+                raise TypeError_(f"string has no method '{expr.method}'", expr)
+
         # Result<T,E> のメソッド
         if obj_type.name == "Result":
             if expr.method in ("is_ok", "is_err"):

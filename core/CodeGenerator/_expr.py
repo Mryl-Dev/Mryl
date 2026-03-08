@@ -578,6 +578,31 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 default_code = self._generate_expr(expr.args[0]) if expr.args else "0"
                 return f"({obj_code}.is_ok ? {obj_code}.data.ok_val : {default_code})"
 
+        # string 型の組み込みメソッド
+        if obj_type == "string":
+            obj_code = self._generate_expr(expr.obj)
+            if expr.method == 'len':
+                return f"mryl_str_len({obj_code})"
+            elif expr.method == 'contains':
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_contains({obj_code}, {arg})"
+            elif expr.method == 'starts_with':
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_starts_with({obj_code}, {arg})"
+            elif expr.method == 'ends_with':
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_ends_with({obj_code}, {arg})"
+            elif expr.method == 'trim':
+                return f"mryl_str_trim({obj_code})"
+            elif expr.method == 'to_upper':
+                return f"mryl_str_to_upper({obj_code})"
+            elif expr.method == 'to_lower':
+                return f"mryl_str_to_lower({obj_code})"
+            elif expr.method == 'replace':
+                a0 = self._generate_expr(expr.args[0])
+                a1 = self._generate_expr(expr.args[1])
+                return f"mryl_str_replace({obj_code}, {a0}, {a1})"
+
         obj         = self._generate_expr(expr.obj)
         args_list   = [self._generate_expr(arg) for arg in expr.args]
         struct_name = obj_type   # Bug#27: obj の型から struct 名を解決

@@ -16,6 +16,7 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self._emit("#include <stdint.h>")
         self._emit("#include <stdarg.h>")
         self._emit("#include <time.h>")
+        self._emit("#include <ctype.h>")
         self._emit("#include <regex.h>")
         self._emit("")
 
@@ -194,6 +195,58 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self._emit("strcat(result.data, b.data);")
         self._emit("result.length = new_length;")
         self._emit("return result;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("")
+        self._emit("// string built-in method helpers")
+        self._emit("static inline int32_t mryl_str_len(MrylString s) { return (int32_t)s.length; }")
+        self._emit("static inline int mryl_str_contains(MrylString s, MrylString sub) { return strstr(s.data, sub.data) != NULL; }")
+        self._emit("static inline int mryl_str_starts_with(MrylString s, MrylString pre) { return strncmp(s.data, pre.data, strlen(pre.data)) == 0; }")
+        self._emit("static inline int mryl_str_ends_with(MrylString s, MrylString suf) {")
+        self.indent_level += 1
+        self._emit("size_t sl = strlen(s.data), pl = strlen(suf.data);")
+        self._emit("if (pl > sl) return 0;")
+        self._emit("return strcmp(s.data + (sl - pl), suf.data) == 0;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("static inline MrylString mryl_str_trim(MrylString s) {")
+        self.indent_level += 1
+        self._emit("const char *p = s.data; while (*p == ' ' || *p == '\\t' || *p == '\\n' || *p == '\\r') p++;")
+        self._emit("size_t len = strlen(p);")
+        self._emit("while (len > 0 && (p[len-1] == ' ' || p[len-1] == '\\t' || p[len-1] == '\\n' || p[len-1] == '\\r')) len--;")
+        self._emit("char *buf = (char*)malloc(len + 1); memcpy(buf, p, len); buf[len] = '\\0';")
+        self._emit("MrylString r; r.data = buf; r.length = (int)len; return r;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("static inline MrylString mryl_str_to_upper(MrylString s) {")
+        self.indent_level += 1
+        self._emit("char *buf = (char*)malloc(s.length + 1); strcpy(buf, s.data);")
+        self._emit("for (int i = 0; i < s.length; i++) buf[i] = (char)toupper((unsigned char)buf[i]);")
+        self._emit("MrylString r; r.data = buf; r.length = s.length; return r;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("static inline MrylString mryl_str_to_lower(MrylString s) {")
+        self.indent_level += 1
+        self._emit("char *buf = (char*)malloc(s.length + 1); strcpy(buf, s.data);")
+        self._emit("for (int i = 0; i < s.length; i++) buf[i] = (char)tolower((unsigned char)buf[i]);")
+        self._emit("MrylString r; r.data = buf; r.length = s.length; return r;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("static inline MrylString mryl_str_replace(MrylString s, MrylString from, MrylString to_s) {")
+        self.indent_level += 1
+        self._emit("if (from.length == 0) return make_mryl_string(s.data);")
+        self._emit("int count = 0; const char *p = s.data;")
+        self._emit("while ((p = strstr(p, from.data)) != NULL) { count++; p += from.length; }")
+        self._emit("int new_len = s.length + count * (to_s.length - from.length);")
+        self._emit("char *buf = (char*)malloc(new_len + 1); char *dst = buf; p = s.data;")
+        self._emit("const char *found;")
+        self._emit("while ((found = strstr(p, from.data)) != NULL) {")
+        self.indent_level += 1
+        self._emit("size_t seg = found - p; memcpy(dst, p, seg); dst += seg;")
+        self._emit("memcpy(dst, to_s.data, to_s.length); dst += to_s.length; p = found + from.length;")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit("strcpy(dst, p); MrylString r; r.data = buf; r.length = new_len; return r;")
         self.indent_level -= 1
         self._emit("}")
         self._emit("")
