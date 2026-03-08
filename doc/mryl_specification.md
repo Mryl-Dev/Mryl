@@ -1,7 +1,7 @@
 ﻿# Mryl プログラミング言語 - 完全仕様書
 
-**バージョン**: 0.2.0 
-**最終更新**: 2026年3月5日
+**バージョン**: 0.3.0 
+**最終更新**: 2026年3月8日
 
 ---
 
@@ -42,7 +42,7 @@
 - **fn 型パラメータ**: 関数をコールバックとして渡せる高階関数
 - **fix キーワード**: 不変変数・不変関数パラメータの宣言
 - **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
-- **string 損作**: 連結（`+`）・比較（`==` / `!=`）
+- **string 操作**: 連結（`+`）・比較（`==` / `!=`）・組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
 - **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`
 - **async / await**: 状態機械 + シングルスレッドスケジューラによる非同期処理
 
@@ -116,7 +116,7 @@ Mryl/
 │   ├── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
 │   ├── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
    ├── test_17_higherorder.ml       # 高階関数
-   ├── test_18_string_ops.ml        # 文字列操作
+   ├── test_18_string_ops.ml        # 文字列操作（連結・比較・組み込みメソッド）
    ├── test_19_nested_struct.ml     # ネスト構造体
    ├── test_20_callback.ml          # コールバック
    ├── test_21_fix.ml               # fix キーワード
@@ -256,12 +256,29 @@ Mryl/
 
 ### 3.11 string 操作
 
+#### 演算子
+
 | 機能 | 説明 |
 |------|------|
 | `a + b` | string 連結（`mryl_string_concat` で展開） |
 | `a == b` | string 比較（`strcmp` で展開） |
 | `a != b` | string 非等比較 |
 | 関数引数・戻り値 | `string` 型の受け渡し・返却 |
+
+#### 組み込みメソッド（v0.3.0 #11）
+
+| メソッド | 引数 | 戻り値 | C 展開先 |
+|----------|------|--------|----------|
+| `s.len()` | — | `i32` | `mryl_str_len(s)` |
+| `s.contains(sub)` | `string` | `bool` | `mryl_str_contains(s, sub)` |
+| `s.starts_with(pre)` | `string` | `bool` | `mryl_str_starts_with(s, pre)` |
+| `s.ends_with(suf)` | `string` | `bool` | `mryl_str_ends_with(s, suf)` |
+| `s.trim()` | — | `string` | `mryl_str_trim(s)` |
+| `s.to_upper()` | — | `string` | `mryl_str_to_upper(s)` |
+| `s.to_lower()` | — | `string` | `mryl_str_to_lower(s)` |
+| `s.replace(from, to)` | `string, string` | `string` | `mryl_str_replace(s, from, to)` |
+
+すべてのメソッドは `_header.py` が生成するインライン C ヘルパー関数へ展開されます。
 
 ---
 

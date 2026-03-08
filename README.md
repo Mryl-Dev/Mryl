@@ -32,10 +32,11 @@
 20. [配列（固定長）](#配列固定長)
 21. [可変長配列（T[]）](#可変長配列t)
 22. [組み込み関数](#組み込み関数)
-23. [型推論](#型推論)
-24. [型チェック](#型チェック)
-25. [まとめ](#まとめ)
-26. [トラブルシューティング](#トラブルシューティング)
+23. [string 組み込みメソッド](#string-組み込みメソッド)
+24. [型推論](#型推論)
+25. [型チェック](#型チェック)
+26. [まとめ](#まとめ)
+27. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -241,7 +242,7 @@ Mryl は以下の機能を備えています：
 - **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
-- **string 操作**：連結（`+`）、比較（`==` / `!=`）
+- **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
 - **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`
 - **構造化エラー出力**：タイムスタンプ付きスタックトレース + 行番号
 
@@ -1550,6 +1551,47 @@ println("f*2={}", f * 2.0);
 
 ---
 
+## string 組み込みメソッド
+
+`string` 型の変数に対してドット記法でメソッドを呼び出せます。
+
+```mryl
+let s = "  Hello, World!  ";
+
+// 文字列長（i32）
+println("len={}", s.len());                        // 18
+
+// 部分文字列を含むか（bool）
+println("has={}", s.contains("World"));            // true
+
+// 前方一致 / 後方一致（bool）
+println("sw={}", "hello".starts_with("hel"));      // true
+println("ew={}", "hello".ends_with("lo"));         // true
+
+// 前後空白除去（string）
+println("trim={}", s.trim());                      // Hello, World!
+
+// 大文字 / 小文字変換（string）
+println("up={}", "hello".to_upper());              // HELLO
+println("lo={}", "WORLD".to_lower());              // world
+
+// 置換（string）
+println("rep={}", "foo bar foo".replace("foo", "baz")); // baz bar baz
+```
+
+| メソッド | 引数 | 戻り値 | 説明 |
+|----------|------|--------|------|
+| `len()` | — | `i32` | 文字列の長さ |
+| `contains(sub)` | `string` | `bool` | 部分文字列を含むか |
+| `starts_with(pre)` | `string` | `bool` | 前方一致 |
+| `ends_with(suf)` | `string` | `bool` | 後方一致 |
+| `trim()` | — | `string` | 前後の空白・改行を除去 |
+| `to_upper()` | — | `string` | 大文字変換 |
+| `to_lower()` | — | `string` | 小文字変換 |
+| `replace(from, to)` | `string, string` | `string` | 全出現箇所を置換 |
+
+---
+
 ## まとめ
 
 Mryl は以下の特徴を備えた最小限の本格プログラミング言語です：
@@ -1574,7 +1616,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fn 型パラメータ**（高階関数・コールバック）  
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
-✓ **string 操作**（連結 `+`、比較 `==` / `!=`）  
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 8 種）  
 ✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`）  
 ✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
 ✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
@@ -1604,7 +1646,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_15_loop_boundary.ml](../tests/test_15_loop_boundary.ml) | ループ境界値（while/for/break/continue）| ✅ Python + C + Native |
 | [tests/test_16_async_lambda.ml](../tests/test_16_async_lambda.ml) | async ラムダ式（定義・呼び出し・await 待機・ネスト await） | ✅ Python + C + Native |
 | [tests/test_17_higherorder.ml](../tests/test_17_higherorder.ml) | 高階関数・ラムダ応用・前方宣言・相互再帰 | ✅ Python + C + Native |
-| [tests/test_18_string_ops.ml](../tests/test_18_string_ops.ml) | string 操作（連結・比較） | ✅ Python + C + Native |
+| [tests/test_18_string_ops.ml](../tests/test_18_string_ops.ml) | string 操作（連結・比較・組み込みメソッド） | ✅ Python + C + Native |
 | [tests/test_19_nested_struct.ml](../tests/test_19_nested_struct.ml) | ネスト struct・struct 配列 | ✅ Python + C + Native |
 | [tests/test_20_callback.ml](../tests/test_20_callback.ml) | fn 型パラメータ（コールバック） | ✅ Python + C + Native |
 | [tests/test_21_fix.ml](../tests/test_21_fix.ml) | `fix` キーワード（不変変数・不変引数） | ✅ Python + C + Native |
