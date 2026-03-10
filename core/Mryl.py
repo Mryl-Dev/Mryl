@@ -23,7 +23,7 @@ else:
 # Get input file from command line argument, default to advanced_methods.ml
 # input_file = sys.argv[1] if len(sys.argv) > 1 else "./tests/test_10_async_await.ml"
 # input_file = sys.argv[1] if len(sys.argv) > 1 else "./my/async.ml"
-input_file = sys.argv[1] if len(sys.argv) > 1 else "./my/callback.ml"
+input_file = sys.argv[1] if len(sys.argv) > 1 else "./my/string.ml"
 
 with open(input_file, "r", encoding="utf-8-sig") as f:
     source = f.read()

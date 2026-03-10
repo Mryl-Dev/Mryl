@@ -124,6 +124,9 @@ class Interpreter:
         for name, func in self.builtins.items():
             self.functions[name] = ("builtin", func)
 
+        # Build dispatch tables for exec_stmt / eval_expr
+        self._build_dispatch_tables()
+
     # ============================================================
     # プログラム実行
     # ============================================================
@@ -441,6 +444,44 @@ class Interpreter:
     # ============================================================
     # 文の実行
     # ============================================================
+    def _build_dispatch_tables(self):
+        """exec_stmt / eval_expr 用の dispatch table を構築する。"""
+        self._stmt_dispatch = {
+            LetDecl:          self._exec_let_decl,
+            FixDecl:          self._exec_fix_decl,
+            Assignment:       self.exec_assignment,
+            IfStmt:           self._exec_if_stmt,
+            WhileStmt:        self._exec_while_stmt,
+            ForStmt:          self.exec_for,
+            ReturnStmt:       self._exec_return_stmt,
+            BreakStmt:        self._exec_break_stmt,
+            ContinueStmt:     self._exec_continue_stmt,
+            ExprStmt:         self._exec_expr_stmt,
+            Block:            self._exec_block_stmt,
+            ConditionalBlock: self.exec_conditional_block,
+        }
+        self._expr_dispatch = {
+            NumberLiteral:   self._eval_number_literal,
+            FloatLiteral:    self._eval_float_literal,
+            StringLiteral:   self._eval_string_literal,
+            BoolLiteral:     self._eval_bool_literal,
+            VarRef:          self._eval_varref,
+            UnaryOp:         self._eval_unary_op,
+            BinaryOp:        self._eval_binary_op,
+            ArrayAccess:     self._eval_array_access,
+            StructAccess:    self._eval_struct_access,
+            FunctionCall:    self._eval_function_call,
+            StructInit:      self.eval_struct_init,
+            ArrayLiteral:    self._eval_array_literal,
+            MethodCall:      self.eval_method_call,
+            Range:           self._eval_range,
+            Lambda:          self._eval_lambda,
+            AwaitExpr:       self._eval_await_expr,
+            EnumVariantExpr: self._eval_enum_variant_expr,
+            MatchExpr:       self._eval_match_expr,
+            BlockExpr:       self._eval_block_expr,
+        }
+
     def exec_block(self, block: Block, env):
         """Execute block of statements with new scope.
         
@@ -460,86 +501,57 @@ class Interpreter:
             self.pop_scope(env)
 
     def exec_stmt(self, stmt, env):
-        """Execute a single statement.
-        
-        Args:
-            stmt: Statement AST node (any Statement subclass)
-            env (list): Scope stack
-        
-        Raises:
-            ReturnSignal: When return statement is encountered
-            RuntimeError: For unhandled statement types
-        
-        Handles:
-            - LetDecl: Variable declarations with optional initialization
-            - Assignment: Variable/array/field updates
-            - IfStmt: Conditional execution with else-if chaining
-            - WhileStmt: Loop execution
-            - ForStmt: Both C-style and Rust-style loops
-            - ReturnStmt: Function returns via exception
-            - ExprStmt: Expression statements
-            - Block: Nested blocks
-        """
-        if isinstance(stmt, LetDecl):
-            value = None
-            if stmt.init_expr:
-                value = self.eval_expr(stmt.init_expr, env)
-            self.set_var(env, stmt.name, value)
-
-        elif isinstance(stmt, FixDecl):
-            value = self.eval_expr(stmt.init_expr, env)
-            self.set_var(env, stmt.name, value)
-            self.fix_vars.add(stmt.name)
-
-        elif isinstance(stmt, Assignment):
-            self.exec_assignment(stmt, env)
-
-        elif isinstance(stmt, IfStmt):
-            cond = self.eval_expr(stmt.condition, env)
-            if cond:
-                self.exec_block(stmt.then_block, env)
-            else:
-                if stmt.else_block:
-                    if isinstance(stmt.else_block, IfStmt):
-                        # else if の場合は再帰的に IfStmt を処理
-                        self.exec_stmt(stmt.else_block, env)
-                    else:
-                        # else { ... } の場合は Block
-                        self.exec_block(stmt.else_block, env)
-
-        elif isinstance(stmt, WhileStmt):
-            while self.eval_expr(stmt.condition, env):
-                try:
-                    self.exec_block(stmt.body, env)
-                except BreakSignal:
-                    break
-                except ContinueSignal:
-                    continue
-
-        elif isinstance(stmt, ForStmt):
-            self.exec_for(stmt, env)
-
-        elif isinstance(stmt, ReturnStmt):
-            value = self.eval_expr(stmt.expr, env)
-            raise ReturnSignal(value)
-
-        elif isinstance(stmt, BreakStmt):
-            raise BreakSignal()
-
-        elif isinstance(stmt, ContinueStmt):
-            raise ContinueSignal()
-
-        elif isinstance(stmt, ExprStmt):
-            self.eval_expr(stmt.expr, env)
-
-        elif isinstance(stmt, Block):
-            self.exec_block(stmt, env)
-        
-        elif isinstance(stmt, ConditionalBlock):
-            self.exec_conditional_block(stmt, env)
-
-        else:
+        """Execute a single statement via dispatch table."""
+        handler = self._stmt_dispatch.get(type(stmt))
+        if handler is None:
             raise RuntimeError(f"Unknown statement: {stmt}")
+        handler(stmt, env)
+
+    # --- exec_stmt ハンドラ群 ---
+
+    def _exec_let_decl(self, stmt: LetDecl, env):
+        value = self.eval_expr(stmt.init_expr, env) if stmt.init_expr else None
+        self.set_var(env, stmt.name, value)
+
+    def _exec_fix_decl(self, stmt: FixDecl, env):
+        value = self.eval_expr(stmt.init_expr, env)
+        self.set_var(env, stmt.name, value)
+        self.fix_vars.add(stmt.name)
+
+    def _exec_if_stmt(self, stmt: IfStmt, env):
+        cond = self.eval_expr(stmt.condition, env)
+        if cond:
+            self.exec_block(stmt.then_block, env)
+        elif stmt.else_block:
+            if isinstance(stmt.else_block, IfStmt):
+                self.exec_stmt(stmt.else_block, env)
+            else:
+                self.exec_block(stmt.else_block, env)
+
+    def _exec_while_stmt(self, stmt: WhileStmt, env):
+        while self.eval_expr(stmt.condition, env):
+            try:
+                self.exec_block(stmt.body, env)
+            except BreakSignal:
+                break
+            except ContinueSignal:
+                continue
+
+    def _exec_return_stmt(self, stmt: ReturnStmt, env):
+        raise ReturnSignal(self.eval_expr(stmt.expr, env))
+
+    def _exec_break_stmt(self, stmt: BreakStmt, env):
+        raise BreakSignal()
+
+    def _exec_continue_stmt(self, stmt: ContinueStmt, env):
+        raise ContinueSignal()
+
+    def _exec_expr_stmt(self, stmt: ExprStmt, env):
+        self.eval_expr(stmt.expr, env)
+
+    def _exec_block_stmt(self, stmt: Block, env):
+        self.exec_block(stmt, env)
+
 
     def exec_conditional_block(self, stmt: ConditionalBlock, env):
         """Execute conditional compilation block"""
@@ -723,217 +735,163 @@ class Interpreter:
     # Expression Evaluation
     # ============================================================
     def eval_expr(self, expr, env):
-        """Evaluate expression to its runtime value.
-        
-        Args:
-            expr: Expression AST node (supports 13+ expression types)
-            env (list): Scope stack for variable lookup
-        
-        Supported expression types:
-            - NumberLiteral: Return numeric value
-            - FloatLiteral: Return float value
-            - StringLiteral: Return string value
-            - BoolLiteral: Return boolean value
-            - VarRef: Look up variable in scope stack
-            - UnaryOp: ++/--/post++/post-- (pre/post increment/decrement)
-            - BinaryOp: Arithmetic, comparison, logical operations
-            - FunctionCall: Invoke function with arguments
-            - ArrayLiteral: Create list from elements
-            - ArrayAccess: Index into array
-            - StructInit: Create struct instance with fields
-            - StructAccess: Access struct field
-            - ConditionalExpr: Ternary operator (condition ? true : false)
-        
-        Returns:
-            Computed value of expression (any Python type)
-        
-        Raises:
-            NameError: If variable not found in scope
-            RuntimeError: If operation invalid for operand types
-            TypeError: If operation type mismatch
-        
-        Notes:
-            - Pre/post increment differ: ++x returns new value, x++ returns old value
-            - Variable scope searched deepest-first via get_var()
-            - Function calls delegate to call_function()
-        """
-        if isinstance(expr, NumberLiteral):
-            return expr.value
+        """Evaluate expression to its runtime value via dispatch table."""
+        handler = self._expr_dispatch.get(type(expr))
+        if handler is None:
+            raise RuntimeError(f"Unknown expression: {expr}")
+        return handler(expr, env)
 
-        if isinstance(expr, FloatLiteral):
-            return expr.value
+    # --- eval_expr ハンドラ群 ---
 
-        if isinstance(expr, StringLiteral):
-            return expr.value
+    def _eval_number_literal(self, expr: NumberLiteral, env):
+        return expr.value
 
-        if isinstance(expr, BoolLiteral):
-            return expr.value
+    def _eval_float_literal(self, expr: FloatLiteral, env):
+        return expr.value
 
-        if isinstance(expr, VarRef):
-            return self.get_var(env, expr.name)
+    def _eval_string_literal(self, expr: StringLiteral, env):
+        return expr.value
 
-        if isinstance(expr, UnaryOp):
-            return self._eval_unary_op(expr, env)
+    def _eval_bool_literal(self, expr: BoolLiteral, env):
+        return expr.value
 
-        if isinstance(expr, BinaryOp):
-            # Handle short-circuit evaluation for logical operators
-            if expr.op == "&&":
-                left = self.eval_expr(expr.left, env)
-                if not self.is_truthy(left):
-                    return False  # Short-circuit: right is not evaluated
-                right = self.eval_expr(expr.right, env)
-                return self.is_truthy(right)
-            
-            if expr.op == "||":
-                left = self.eval_expr(expr.left, env)
-                if self.is_truthy(left):
-                    return True  # Short-circuit: right is not evaluated
-                right = self.eval_expr(expr.right, env)
-                return self.is_truthy(right)
-            
-            # For other operators, evaluate both sides
+    def _eval_varref(self, expr: VarRef, env):
+        return self.get_var(env, expr.name)
+
+    def _eval_binary_op(self, expr: BinaryOp, env):
+        if expr.op == "&&":
             left = self.eval_expr(expr.left, env)
-            right = self.eval_expr(expr.right, env)
-            return self.eval_binary(expr.op, left, right)
+            if not self.is_truthy(left):
+                return False
+            return self.is_truthy(self.eval_expr(expr.right, env))
+        if expr.op == "||":
+            left = self.eval_expr(expr.left, env)
+            if self.is_truthy(left):
+                return True
+            return self.is_truthy(self.eval_expr(expr.right, env))
+        left  = self.eval_expr(expr.left, env)
+        right = self.eval_expr(expr.right, env)
+        return self.eval_binary(expr.op, left, right)
 
-        if isinstance(expr, ArrayAccess):
-            arr = self.eval_expr(expr.array, env)
-            index = self.eval_expr(expr.index, env)
-            return arr[index]
+    def _eval_array_access(self, expr: ArrayAccess, env):
+        arr   = self.eval_expr(expr.array, env)
+        index = self.eval_expr(expr.index, env)
+        return arr[index]
 
-        if isinstance(expr, StructAccess):
-            obj = self.eval_expr(expr.obj, env)
-            return obj[expr.field]
+    def _eval_struct_access(self, expr: StructAccess, env):
+        obj = self.eval_expr(expr.obj, env)
+        return obj[expr.field]
 
-        if isinstance(expr, FunctionCall):
-            # Check if the name refers to a lambda variable in scope
-            try:
-                maybe_lambda = self.get_var(env, expr.name)
-                if isinstance(maybe_lambda, dict) and maybe_lambda.get('__lambda__'):
-                    args = [self.eval_expr(a, env) for a in expr.args]
-                    return self.call_lambda(maybe_lambda, args)
-                # static fn 参照（Python callable）が変数に格納されている場合
-                if callable(maybe_lambda):
-                    args = [self.eval_expr(a, env) for a in expr.args]
-                    return maybe_lambda(*args)
-            except RuntimeError:
-                pass  # Not a variable, fall through to normal function call
+    def _eval_function_call(self, expr: FunctionCall, env):
+        try:
+            maybe_lambda = self.get_var(env, expr.name)
+            if isinstance(maybe_lambda, dict) and maybe_lambda.get('__lambda__'):
+                args = [self.eval_expr(a, env) for a in expr.args]
+                return self.call_lambda(maybe_lambda, args)
+            if callable(maybe_lambda):
+                args = [self.eval_expr(a, env) for a in expr.args]
+                return maybe_lambda(*args)
+        except RuntimeError:
+            pass
+        subst = self.infer_call_subst(expr, env)
+        args  = [self.eval_expr(a, env) for a in expr.args]
+        return self.call_function(expr.name, args, subst)
 
-            subst = self.infer_call_subst(expr, env)
-            args = [self.eval_expr(a, env) for a in expr.args]
-            return self.call_function(expr.name, args, subst)
+    def _eval_array_literal(self, expr: ArrayLiteral, env):
+        return [self.eval_expr(e, env) for e in expr.elements]
 
-        if isinstance(expr, StructInit):
-            return self.eval_struct_init(expr, env)
+    def _eval_range(self, expr: Range, env):
+        start = self.eval_expr(expr.start, env)
+        end   = self.eval_expr(expr.end, env)
+        return {"__range__": True, "start": start, "end": end, "inclusive": expr.inclusive}
 
-        if isinstance(expr, ArrayLiteral):
-            return [self.eval_expr(e, env) for e in expr.elements]
+    def _eval_lambda(self, expr: Lambda, env):
+        captured_env = [dict(scope) for scope in env]
+        return {
+            '__lambda__': True,
+            'params': expr.params,
+            'body': expr.body,
+            'is_async': getattr(expr, 'is_async', False),
+            'captured_env': captured_env,
+        }
 
-        if isinstance(expr, MethodCall):
-            return self.eval_method_call(expr, env)
+    def _eval_await_expr(self, expr: AwaitExpr, env):
+        future = self.eval_expr(expr.expr, env)
+        if isinstance(future, dict) and future.get('__future__'):
+            loop = future.get('loop')
+            if loop is None:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        raise RuntimeError("already running")
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            return loop.run_until_complete(future['task'])
+        raise RuntimeError("await: expression is not a Future")
 
-        if isinstance(expr, Range):
-            start = self.eval_expr(expr.start, env)
-            end = self.eval_expr(expr.end, env)
-            # Return a Range object (dict) that can be iterated
-            # Using a dict to represent Range at runtime
-            return {"__range__": True, "start": start, "end": end, "inclusive": expr.inclusive}
-
-        if isinstance(expr, Lambda):
-            # Create a closure: capture current env snapshot
-            captured_env = [dict(scope) for scope in env]
-            return {
-                '__lambda__': True,
-                'params': expr.params,
-                'body': expr.body,
-                'is_async': getattr(expr, 'is_async', False),
-                'captured_env': captured_env,
-            }
-
-        if isinstance(expr, AwaitExpr):
-            future = self.eval_expr(expr.expr, env)
-            if isinstance(future, dict) and future.get('__future__'):
-                loop = future.get('loop')
-                if loop is None:
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            raise RuntimeError("already running")
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                return loop.run_until_complete(future['task'])
-            raise RuntimeError("await: expression is not a Future")
-
-        if isinstance(expr, EnumVariantExpr):
-            # TypeName::member が static fn 呼び出し/参照 か enum variant かを判定
-            struct = self.structs.get(expr.enum_name)
-            if struct:
-                method = next(
-                    (m for m in struct.methods if m.name == expr.variant_name and getattr(m, 'is_static', False)),
-                    None
-                )
-                if method:
-                    if expr.has_parens:
-                        # TypeName::method(args) — static fn 呼び出し
-                        args_eval = [self.eval_expr(a, env) for a in expr.args]
-                        new_env = {}
-                        for param, val in zip(method.params, args_eval):
-                            new_env[param.name] = val
-                        self.env.append(new_env)
-                        try:
-                            for stmt in method.body.statements:
-                                self.exec_stmt(stmt, self.env)
-                        except ReturnSignal as ret:
-                            return ret.value
-                        finally:
-                            self.env.pop()
-                        return None
-                    else:
-                        # TypeName::method — fn 型変数への参照（クロージャ相当）
-                        def _make_static_ref(m, interp):
-                            def _call(*args_eval):
-                                new_env = {}
-                                for param, val in zip(m.params, args_eval):
-                                    new_env[param.name] = val
-                                interp.env.append(new_env)
-                                try:
-                                    for stmt in m.body.statements:
-                                        interp.exec_stmt(stmt, interp.env)
-                                except ReturnSignal as ret:
-                                    return ret.value
-                                finally:
-                                    interp.env.pop()
-                                return None
-                            return _call
-                        return _make_static_ref(method, self)
-            # enum variant: {__enum__: EnumName, __variant__: VariantName, __data__: [...]}
-            data = [self.eval_expr(a, env) for a in expr.args]
-            return {'__enum__': expr.enum_name, '__variant__': expr.variant_name, '__data__': data}
-
-        if isinstance(expr, MatchExpr):
-            val = self.eval_expr(expr.scrutinee, env)
-            for arm in expr.arms:
-                bound, matched = self._match_pattern(arm.pattern, val)
-                if matched:
-                    arm_env = env + [bound]
-                    return self.eval_expr(arm.body, arm_env)
-            raise MrylRuntimeError(
-                f"no arm matched value: {val!r}",
-                error_type="MatchError",
-                call_stack=self.call_stack,
+    def _eval_enum_variant_expr(self, expr: EnumVariantExpr, env):
+        struct = self.structs.get(expr.enum_name)
+        if struct:
+            method = next(
+                (m for m in struct.methods if m.name == expr.variant_name and getattr(m, 'is_static', False)),
+                None
             )
+            if method:
+                if expr.has_parens:
+                    args_eval = [self.eval_expr(a, env) for a in expr.args]
+                    new_env = {}
+                    for param, val in zip(method.params, args_eval):
+                        new_env[param.name] = val
+                    self.env.append(new_env)
+                    try:
+                        for stmt in method.body.statements:
+                            self.exec_stmt(stmt, self.env)
+                    except ReturnSignal as ret:
+                        return ret.value
+                    finally:
+                        self.env.pop()
+                    return None
+                else:
+                    def _make_static_ref(m, interp):
+                        def _call(*args_eval):
+                            new_env = {}
+                            for param, val in zip(m.params, args_eval):
+                                new_env[param.name] = val
+                            interp.env.append(new_env)
+                            try:
+                                for stmt in m.body.statements:
+                                    interp.exec_stmt(stmt, interp.env)
+                            except ReturnSignal as ret:
+                                return ret.value
+                            finally:
+                                interp.env.pop()
+                            return None
+                        return _call
+                    return _make_static_ref(method, self)
+        data = [self.eval_expr(a, env) for a in expr.args]
+        return {'__enum__': expr.enum_name, '__variant__': expr.variant_name, '__data__': data}
 
-        if isinstance(expr, BlockExpr):
-            # ブロック式: ステートメントを順番に実行し、最後の result_expr を返す
-            block_env = env + [{}]
-            for stmt in expr.stmts:
-                self.exec_stmt(stmt, block_env)
-            if expr.result_expr is not None:
-                return self.eval_expr(expr.result_expr, block_env)
-            return None
+    def _eval_match_expr(self, expr: MatchExpr, env):
+        val = self.eval_expr(expr.scrutinee, env)
+        for arm in expr.arms:
+            bound, matched = self._match_pattern(arm.pattern, val)
+            if matched:
+                arm_env = env + [bound]
+                return self.eval_expr(arm.body, arm_env)
+        raise MrylRuntimeError(
+            f"no arm matched value: {val!r}",
+            error_type="MatchError",
+            call_stack=self.call_stack,
+        )
 
-        raise RuntimeError(f"Unknown expression: {expr}")
+    def _eval_block_expr(self, expr: BlockExpr, env):
+        block_env = env + [{}]
+        for stmt in expr.stmts:
+            self.exec_stmt(stmt, block_env)
+        if expr.result_expr is not None:
+            return self.eval_expr(expr.result_expr, block_env)
+        return None
 
     def _eval_unary_op(self, expr, env):
         """単項演算子を評価する。eval_expr から委譲される。"""
