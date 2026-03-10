@@ -43,7 +43,7 @@
 - **fix キーワード**: 不変変数・不変関数パラメータの宣言
 - **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
 - **string 操作**: 連結（`+`）・比較（`==` / `!=`）・組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
-- **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`
+- **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
 - **async / await**: 状態機械 + シングルスレッドスケジューラによる非同期処理
 
 ### コンパイルパイプライン
@@ -115,18 +115,16 @@ Mryl/
 │   ├── test_14_branch_coverage.ml   # 条件分岐網羅（C0/C1/MC/DC）
 │   ├── test_15_loop_boundary.ml     # ループ境界値（while/for/break/continue）
 │   ├── test_16_async_lambda.ml      # async ラムダ式（定義・呼び出し・await 待機・ネスト await）
-   ├── test_17_higherorder.ml       # 高階関数
-   ├── test_18_string_ops.ml        # 文字列操作（連結・比較・組み込みメソッド）
-   ├── test_19_nested_struct.ml     # ネスト構造体
-   ├── test_20_callback.ml          # コールバック
-   ├── test_21_fix.ml               # fix キーワード
-   ├── test_22_input.ml             # read_line / parse_int / parse_f64
-   └── test_23_static.ml            # static fn / :: 呼び出し / StaticMethodRef
-├── my/
-│   ├── test_async_lambda.ml          # async ラムダ式（基本）動作確認用
-│   ├── test_async_lambda_await.ml    # async ラムダ式（await 内包）動作確認用
-│   ├── test_lambda_block.ml          # ラムダ式ブロックボディ動作確認用
-│   └── test_lambda_block_return.ml   # ラムダ式ブロックボディ return 動作確認用
+│   ├── test_17_higherorder.ml       # 高階関数
+│   ├── test_18_string_ops.ml        # 文字列操作（連結・比較・組み込みメソッド）
+│   ├── test_19_nested_struct.ml     # ネスト構造体
+│   ├── test_20_callback.ml          # コールバック
+│   ├── test_21_fix.ml               # fix キーワード
+│   ├── test_22_input.ml             # read_line / parse_int / parse_f64（Result<T, string> 返し）
+│   ├── test_23_static.ml            # static fn / :: 呼び出し / StaticMethodRef
+│   ├── test_24_zero_div.ml          # ゼロ除算安全（checked_div・境界値分析）
+│   └── test_25_parse_result.ml      # parse_int / parse_f64 の Result 返し
+├── my/                               # 動作確認用 Mryl コード置き場
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
 │   └── Mryl.exe              # コンパイル済みバイナリ
@@ -287,20 +285,21 @@ Mryl/
 ### 演算子優先順位（高→低）
 
 ```
-優先度  演算子           結合性   説明
-────────────────────────────────────────
- 1     ! ~ ++ -- (prefix)  右    単項 NOT、ビット反転、前置インクリメント
- 2     * / %              左    乗算、除算、剰余
- 3     + -                左    加算、減算
- 4     << >>              左    ビットシフト
- 5     < <= > >=          左    比較演算
- 6     == !=              左    等価演算
- 7     &                  左    ビット AND
- 8     ^                  左    ビット XOR
- 9     |                  左    ビット OR
-10     &&                 左    論理 AND (短絡評価)
-11     ||                 左    論理 OR (短絡評価)
-12     = += -= *= /= %= <<= >>= ^=  右    代入（複合代入含む）
+優先度  演算子                        結合性   説明
+───────────────────────────────────────────────────────────────────────
+ 1     [] . () post++ post--   左    配列インデックス、メンバアクセス、関数呼び出し、後置インクリ
+ 2     ! ~ ++ -- (prefix)      右    単項 NOT、ビット反転、前置インクリメント
+ 3     * / %                   左    乗算、除算、剰余
+ 4     + -                     左    加算、減算
+ 5     << >>                   左    ビットシフト
+ 6     < <= > >=               左    比較演算
+ 7     == !=                   左    等価演算
+ 8     &                       左    ビット AND
+ 9     ^                       左    ビット XOR
+10     |                       左    ビット OR
+11     &&                      左    論理 AND (短絡評価)
+12     ||                      左    論理 OR (短絡評価)
+13     = += -= *= /= %= <<= >>= ^=  右    代入（複合代入含む）
 ```
 
 ### 算術演算
@@ -939,7 +938,7 @@ typedef struct MrylTask {
 ### スケジューラ
 
 ```c
-#define __SCHEDULER_CAP 256
+#define __SCHEDULER_CAP 65536
 typedef struct {
     MrylTask* queue[__SCHEDULER_CAP];
     int head, tail;
@@ -959,7 +958,7 @@ static inline void __scheduler_run(void) {
 }
 ```
 
-- **シングルスレッド**、ロックフリー、静的循環バッファ（最大 256 タスク）
+- **シングルスレッド**、ロックフリー、静的循環バッファ（最大 65536 タスク）
 - `move_next()` が `return` すると制御がスケジューラに返り次のタスクを処理
 - `await` で中断したタスクは、被待機タスクの完了時に `awaiter` 経由で再 POST
 
@@ -1247,21 +1246,53 @@ println("got={}", line);
 
 ### parse_int
 
-`string` を `i32` に変換します。変換失敗時は `ParseError` でパニックします。
+`string` を解析して `Result<i32, string>` を返します。成功時は `Ok(value)`、失敗時は `Err(message)` です。
 
 ```mryl
-let n: i32 = parse_int(read_line());
-println("n+1={}", n + 1);
+// .try() で値を取り出す（Err ならパニック）
+let n: i32 = parse_int("42").try();       // 42
+
+// match で安全に処理
+let r = parse_int("abc");   // Err("cannot parse 'abc' as i32")
+let n2: i32 = match r {
+    Ok(v)  => v,
+    Err(e) => { println("Error: {}", e); -1 },
+};
 ```
 
 ### parse_f64
 
-`string` を `f64` に変換します。変換失敗時は `ParseError` でパニックします。
+`string` を解析して `Result<f64, string>` を返します。成功時は `Ok(value)`、失敗時は `Err(message)` です。
 
 ```mryl
-let f: f64 = parse_f64(read_line());
-println("f*2={}", f * 2.0);
+// .try() で値を取り出す（Err ならパニック）
+let f: f64 = parse_f64("3.14").try();     // 3.14
+
+// match で安全に処理
+let r = parse_f64("abc");   // Err("cannot parse 'abc' as f64")
+let v: f64 = match r {
+    Ok(x)  => x,
+    Err(e) => { println("Error: {}", e); 0.0 },
+};
 ```
+
+### checked_div
+
+`a / b` をゼロ除算安全に計算し、`Result<i32, string>` を返します。
+
+```mryl
+let r1 = checked_div(10, 3);   // Ok(3)
+let r2 = checked_div(5, 0);    // Err("division by zero")
+
+let val: i32 = match r1 {
+    Ok(v)  => v,
+    Err(e) => { println("{}", e); -1 },
+};
+println("{}", val);  // 3
+```
+
+通常の `/` / `%` 演算子でゼロ除算が発生した場合はランタイムパニックになります。  
+安全に処理したい場合は `checked_div` を使ってください。
 
 ---
 
@@ -1345,16 +1376,47 @@ def check_binary(self, expr: BinaryOp):
 
 **役割**: Python で AST を実行（検証用）
 
-**ショートサーキット評価**:
+**dispatch table による分岐**（`type(node)` キーの辞書で isinstance チェーンを排除）:
 ```python
-def eval_expr(self, expr):
-    if isinstance(expr, BinaryOp):
-        if expr.op == "&&":
-            left = self.eval_expr(expr.left)
-            if not self.is_truthy(left):
-                return False  # 右は評価されない！
-            right = self.eval_expr(expr.right)
-            return self.is_truthy(right)
+def _build_dispatch_tables(self):
+    self._stmt_dispatch = {
+        LetDecl: self._exec_let_decl,
+        IfStmt:  self._exec_if_stmt,
+        # ... 12 エントリ（LetDecl 〜 ConditionalBlock）
+    }
+    self._expr_dispatch = {
+        BinaryOp: self._eval_binary_op,  # 短絡評価を内包
+        VarRef:   self._eval_varref,
+        # ... 19 エントリ（NumberLiteral 〜 BlockExpr）
+    }
+
+def exec_stmt(self, stmt, env):
+    handler = self._stmt_dispatch.get(type(stmt))
+    if handler is None:
+        raise RuntimeError(f"Unknown statement: {stmt}")
+    handler(stmt, env)
+
+def eval_expr(self, expr, env):
+    handler = self._expr_dispatch.get(type(expr))
+    if handler is None:
+        raise RuntimeError(f"Unknown expression: {expr}")
+    return handler(expr, env)
+```
+
+**`&&` / `||` のショートサーキット評価** は `_eval_binary_op` ハンドラ内に収容：
+```python
+def _eval_binary_op(self, expr, env):
+    if expr.op == "&&":
+        left = self.eval_expr(expr.left, env)
+        if not self.is_truthy(left):
+            return False  # 右は評価されない
+        return self.is_truthy(self.eval_expr(expr.right, env))
+    if expr.op == "||":
+        left = self.eval_expr(expr.left, env)
+        if self.is_truthy(left):
+            return True   # 右は評価されない
+        return self.is_truthy(self.eval_expr(expr.right, env))
+    # ... 他の演算子
 ```
 
 ### CodeGenerator (C コード生成)
@@ -1400,6 +1462,8 @@ Mryl              C
 class Program:
     structs: list[StructDecl]
     functions: list[FunctionDecl]
+    consts: list[ConstDecl]        # const 宣言（コンパイル時定数）
+    enums: list[EnumDecl]          # enum 宣言
 
 class FunctionDecl:
     name: str

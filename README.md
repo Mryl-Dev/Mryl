@@ -234,7 +234,7 @@ Mryl は以下の機能を備えています：
 - **match 式**：パターンマッチングによる分岐
 - **Result\<T,E\>**：型安全なエラーハンドリング（`Ok` / `Err` + `.try()`）
 - **配列**：固定長配列と可変長配列（`T[]`）に対応
-- **制御構文**：if/else, while, for（Rust 風、C 風）、`break` / `continue`
+- **制御構文**：if/else, while, for（Rust 風・包含 `to`・C 風）、`break` / `continue`
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
 - **フォーマット文字列**：Rust 風の `println("i = {}", i)` 表記
 - **関数**：戻り値型指定、複数パラメータ、前方宣言による相互再帰
@@ -243,7 +243,7 @@ Mryl は以下の機能を備えています：
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
 - **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
-- **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`
+- **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
 - **構造化エラー出力**：タイムスタンプ付きスタックトレース + 行番号
 
 ---
@@ -420,18 +420,19 @@ c ^= 5;   // c = c ^ 5  → 9
 ### 演算子優先順位
 ```
 優先度（高→低）
-1. ! ~ ++ -- （単項演算子）
-2. * / %
-3. + -
-4. << >>
-5. < <= > >=
-6. == !=
-7. &
-8. ^
-9. |
-10. && （短絡評価）
-11. || （短絡評価）
-12. = += -= *= /= %= <<= >>= ^=
+ 1. [] . () post++ post--    （配列インデックス・メンバアクセス・関数呼び出し・後置 インクリ）
+ 2. ! ~ ++ --                （前置単項演算子）
+ 3. * / %
+ 4. + -
+ 5. << >>
+ 6. < <= > >=
+ 7. == !=
+ 8. &
+ 9. ^
+10. |
+11. && （短絡評価）
+12. || （短絡評価）
+13. = += -= *= /= %= <<= >>= ^=
 ```
 
 ### 型昇格（自動型統一）
@@ -502,6 +503,23 @@ for x in arr {
 // フォーマット文字列との組み合わせ
 for i in 0..3 {
     println("i = {}", i);
+}
+```
+
+### for ループ（包含レンジ `to`）
+
+`to` キーワードで**上限を含む**範囲ループを記述できます。`0..10` は 10 を含まず、`0 to 10` は 10 を含みます：
+
+```mryl
+// 0, 1, 2, ..., 10（10 を含む）
+for i in 0 to 10 {
+    println(i);
+}
+
+// 変数を使った例
+let n: i32 = 5;
+for i in 1 to n {    // 1, 2, 3, 4, 5
+    println(i);
 }
 ```
 
@@ -847,14 +865,14 @@ typedef struct MrylTask {
 ### スケジューラ
 
 ```c
-#define __SCHEDULER_CAP 256
+#define __SCHEDULER_CAP 65536
 typedef struct { MrylTask* queue[__SCHEDULER_CAP]; int head, tail; } MrylScheduler;
 
 static inline void __scheduler_post(MrylTask* t) { ... } // タスクをキューに追加
 static inline void __scheduler_run(void)  { ... } // キューが空になるまで実行
 ```
 
-- シングルスレッド、ロックフリー、循環バッファ（最大 256 タスク）
+- シングルスレッド、ロックフリー、循環バッファ（最大 65536 タスク）
 - `move_next` が中断（`return`）するとスケジューラが次のタスクを処理
 - await で中断したタスクは被待機タスクの `awaiter` 経由で再 POST される
 
@@ -909,7 +927,7 @@ awaiter が存在すれば自動的に再スケジュールされます。
 | 項目 | 説明 |
 |------|------|
 | C コード生成 | 状態機械（goto-dispatch） + MrylTask 参照カウント |
-| スケジューラ | シングルスレッド循環バッファ（cap=256）|
+| スケジューラ | シングルスレッド循環バッファ（cap=65536）|
 | 戻り値受け渡し | `MrylTask*.result`（`void*`、ヒープ確保）|
 | 参照カウント | `strong_count` + `weak_count`（shared/weak_ptr 相当）|
 | キャンセル | `__task_cancel()` + `on_cancel` コールバック |
@@ -1537,17 +1555,39 @@ println(to_string("Value is {}", x));
 // 標準入力から1行読み取る
 let line: string = read_line();
 println("got={}", line);
-
-// 文字列を i32 に変換
-let n: i32 = parse_int(read_line());
-println("n+1={}", n + 1);
-
-// 文字列を f64 に変換
-let f: f64 = parse_f64(read_line());
-println("f*2={}", f * 2.0);
 ```
 
-変換に失敗した場合（数値以外の文字列を渡した場合）は `ParseError` でパニックします。
+`parse_int` / `parse_f64` は `Result<T, string>` を返します。`.try()` で値を取り出し、失敗時はパニックします：
+
+```mryl
+// .try() で値を取り出す（Err ならパニック）
+let n: i32 = parse_int("42").try();    // 42
+let f: f64 = parse_f64("3.14").try();  // 3.14
+
+// match で安全に処理する
+let r = parse_int("abc");   // Err("cannot parse 'abc' as i32")
+let n2: i32 = match r {
+    Ok(v)  => v,
+    Err(e) => { println("Error: {}", e); -1 },
+};
+```
+
+### checked_div
+
+`checked_div(a, b)` はゼロ除算を安全に処理し、`Result<i32, string>` を返します。
+
+```mryl
+let r1 = checked_div(10, 3);   // Ok(3)
+let r2 = checked_div(5, 0);    // Err("division by zero")
+
+let val: i32 = match r1 {
+    Ok(v)  => v,
+    Err(e) => { println("{}", e); -1 },
+};
+println("{}", val);  // 3
+```
+
+通常の `/` や `%` 演算子でゼロ除算が発生した場合はランタイムパニックになります。安全に処理したい場合は `checked_div` を使ってください。
 
 ---
 
@@ -1608,7 +1648,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **Result\<T,E\>**（`Ok` / `Err` + `.try()` エラー伝播）  
 ✓ **構造化エラー出力**（タイムスタンプ + スタックトレース + 行番号）  
 ✓ 配列（固定長）と **可変長配列**（`T[]`、push/pop/insert/remove/len/is_empty）  
-✓ 制御構文（if/else, while, for Rust風・C風）  
+✓ 制御構文（if/else, while, for Rust風・包含 `to`・C風）  
 ✓ **break / continue**（while/for 全形式対応）  
 ✓ インクリメント/デクリメント演算子  
 ✓ フォーマット文字列（`println("Value: {}", x)` 形式）  
@@ -1617,7 +1657,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
 ✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 8 種）  
-✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`）  
+✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
 ✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
 ✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
 
@@ -1651,6 +1691,9 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_20_callback.ml](../tests/test_20_callback.ml) | fn 型パラメータ（コールバック） | ✅ Python + C + Native |
 | [tests/test_21_fix.ml](../tests/test_21_fix.ml) | `fix` キーワード（不変変数・不変引数） | ✅ Python + C + Native |
 | [tests/test_22_input.ml](../tests/test_22_input.ml) | ユーザー入力（`read_line` / `parse_int` / `parse_f64`） | ✅ Python + C + Native |
+| [tests/test_23_static.ml](../tests/test_23_static.ml) | `static fn` / `::` 呼び出し / fn 型参照 | ✅ Python + C + Native |
+| [tests/test_24_zero_div.ml](../tests/test_24_zero_div.ml) | ゼロ除算安全（`checked_div` / 境界値分析） | ✅ Python + C + Native |
+| [tests/test_25_parse_result.ml](../tests/test_25_parse_result.ml) | `parse_int` / `parse_f64` の Result 返し | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 
@@ -1698,16 +1741,25 @@ SyntaxError: ...
 
 ---
 
-### `ParseError: cannot parse string as i32` が出る
+### `ParseError` が出る
 
-**原因**: `parse_int()` に整数以外の文字列を渡した。
+**原因**: `parse_int()` / `parse_f64()` は `Result<T, string>` を返します。`.try()` を呼んだとき、入力が無効な数値だと実行時パニックします。
 
 ```mryl
-// NG: 数値以外が入るとクラッシュ
-let n = parse_int(read_line());  // 入力: "abc" → ParseError
+// parse_int は Result<i32, string> を返す
+let r = parse_int("abc");   // Err("cannot parse 'abc' as i32")
+let n = r.try();            // ← ここで ParseError パニック
 ```
 
-**解決策**: 入力内容が正しい数値文字列かを確認する。`read_line()` は末尾の改行を自動除去するため、改行は問題ない。
+**解決策**: `.try()` の前に `match` で `Ok` / `Err` を確認する：
+
+```mryl
+let r = parse_int(read_line());
+let n: i32 = match r {
+    Ok(v)  => v,
+    Err(e) => { println("Error: {}", e); 0 },
+};
+```
 
 ---
 
