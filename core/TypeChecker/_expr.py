@@ -166,6 +166,10 @@ class TypeCheckerExprMixin:
             ret_type = fn_decl.return_type if fn_decl.return_type else TypeNode("void")
             return TypeNode("fn", type_args=param_types + [ret_type])
 
+        # None はビルトインの Option 値
+        if name == "None":
+            return TypeNode("Option")
+
         raise TypeError_(f"Undefined variable: {name}", expr)
 
     # ============================================

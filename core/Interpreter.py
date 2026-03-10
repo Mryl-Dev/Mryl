@@ -202,6 +202,8 @@ class Interpreter:
                 return {'__result_tag__': 'ok', 'value': args[0] if args else None}
             if name == "Err":
                 return {'__result_tag__': 'err', 'value': args[0] if args else None}
+            if name == "Some":
+                return {'__option_tag__': 'some', 'value': args[0] if args else None}
             raise RuntimeError(f"Undefined function: {name}")
 
         entry = self.functions[name]
@@ -756,6 +758,8 @@ class Interpreter:
         return expr.value
 
     def _eval_varref(self, expr: VarRef, env):
+        if expr.name == "None":
+            return {'__option_tag__': 'none'}
         return self.get_var(env, expr.name)
 
     def _eval_binary_op(self, expr: BinaryOp, env):
@@ -957,6 +961,18 @@ class Interpreter:
                 if pattern.bindings:
                     bindings[pattern.bindings[0]] = val.get('value')
                 return bindings, True
+            # Option型 Some(v) / None パターン
+            if pattern.enum_name == 'Some' and pattern.variant_name == 'Some':
+                if not (isinstance(val, dict) and val.get('__option_tag__') == 'some'):
+                    return {}, False
+                bindings = {}
+                if pattern.bindings:
+                    bindings[pattern.bindings[0]] = val.get('value')
+                return bindings, True
+            if pattern.enum_name == 'None' and pattern.variant_name == 'None':
+                if not (isinstance(val, dict) and val.get('__option_tag__') == 'none'):
+                    return {}, False
+                return {}, True
             # 通常の enum パターン
             if not (isinstance(val, dict)
                     and val.get('__enum__') == pattern.enum_name

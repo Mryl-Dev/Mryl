@@ -34,6 +34,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             return "1" if expr.value else "0"
 
         if expr_class == "VarRef":
+            if expr.name == "None":
+                struct_name = self.current_return_type or "MrylOption_int32_t"
+                return f"({struct_name}){{0, 0}}"
             if self.sm_mode and expr.name in self.sm_vars:
                 return f"__sm->{expr.name}"
             if expr.name in self.capture_map:
@@ -129,6 +132,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             for scope in reversed(self.env):
                 if expr.name in scope and scope[expr.name] in ('fn', 'fn_closure'):
                     return self._generate_function_call(expr)
+            # Ok/Err/Some は compound literal 生成が必要なので _generate_function_call に委譲
+            if expr.name in ("Ok", "Err", "Some"):
+                return self._generate_function_call(expr)
             args = [self._generate_expr_with_temps(arg, temp_string_mapping) for arg in expr.args]
             if expr.name in ["print", "println"]:
                 return self._generate_print_call(expr)
@@ -174,6 +180,11 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f"({struct_name}){{1, {{.ok_val = {val_code}}}}}"
             else:
                 return f"({struct_name}){{0, {{.err_val = {val_code}}}}}"
+
+        if expr.name == "Some":
+            val_code    = self._generate_expr(expr.args[0]) if expr.args else "0"
+            struct_name = self.current_return_type or "MrylOption_int32_t"
+            return f"({struct_name}){{{val_code}, 1}}"
 
         for scope in reversed(self.env):
             if expr.name in scope and scope[expr.name] == "async_fn":
@@ -441,6 +452,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return {pattern.bindings[0]: ok_type}
             if pattern.enum_name == "Err" and pattern.bindings:
                 return {pattern.bindings[0]: "string"}
+            # Option<T> の Some(v) パターン
+            if pattern.enum_name == "Some" and pattern.bindings:
+                inner_type = "i32"
+                if scrutinee_type.startswith("MrylOption_"):
+                    inner_type = scrutinee_type[len("MrylOption_"):]
+                return {pattern.bindings[0]: inner_type}
             enum_decl = self.enums.get(pattern.enum_name)
             if enum_decl:
                 variant = next(
@@ -491,6 +508,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 field    = "ok_val" if is_ok else "err_val"
                 bindings = [f"__auto_type {name} = {mv}.data.{field};" for name in pattern.bindings]
                 return cond, bindings
+            # Option<T> の Some(v) / None パターン
+            if enum_name == "Some":
+                cond     = f"{mv}.has_value"
+                bindings = [f"__auto_type {name} = {mv}.value;" for name in pattern.bindings]
+                return cond, bindings
+            if enum_name == "None":
+                return f"!{mv}.has_value", []
             enum_decl    = self.enums.get(enum_name)
             has_data     = enum_decl and any(v.fields for v in enum_decl.variants)
             if has_data:

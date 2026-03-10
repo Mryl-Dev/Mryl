@@ -114,6 +114,8 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             return "bool"
 
         if expr_class == "VarRef":
+            if expr.name == "None":
+                return "Option"
             for env_dict in reversed(self.env):
                 if expr.name in env_dict:
                     return env_dict[expr.name]
@@ -134,6 +136,8 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
         if expr_class == "FunctionCall":
             if expr.name in ("Ok", "Err"):
                 return "Result"
+            if expr.name == "Some":
+                return "Option"
             # 組み込みマクロ/関数の戻り値型を直接解決 (#25 to_string 対応)
             _builtin_return_types = {
                 "to_string": "string",
@@ -155,6 +159,12 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                         ok_name = type_args[0].name if hasattr(type_args[0], 'name') else str(type_args[0])
                         return f"Result_{ok_name}"
                     return "Result"
+                if fn.return_type.name == "Option":
+                    type_args = getattr(fn.return_type, 'type_args', None)
+                    if type_args:
+                        inner_name = type_args[0].name if hasattr(type_args[0], 'name') else str(type_args[0])
+                        return f"MrylOption_{inner_name}"
+                    return "Option"
                 # ジェネリック関数: 型引数を推論して戻り値型を解決 (#26)
                 if fn.type_params and fn.return_type.name in fn.type_params:
                     type_args = self._infer_generic_type_args(fn, expr.args)

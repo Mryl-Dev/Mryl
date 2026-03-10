@@ -185,9 +185,11 @@ class TypeCheckerCallMixin:
 
         func = self.functions.get(expr.name)
         if not func:
-            # Ok/Err はビルトイン扱い
+            # Ok/Err/Some はビルトイン扱い
             if expr.name in ("Ok", "Err"):
                 return TypeNode("Result")
+            if expr.name == "Some":
+                return TypeNode("Option")
             raise TypeError_(f"Undefined function: {expr.name}", expr)
 
         # 1. 引数数チェック（builtin は除外）

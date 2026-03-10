@@ -85,6 +85,7 @@ class CodeGenerator(
         self.capture_map                 = {}    # {var_name: c_expr}
         self.closure_env_types           = {}    # {var_name: lambda_name}
         self.result_type_registry        = set() # set of (ok_c, err_c, struct_name)
+        self.option_type_registry        = set() # set of (inner_c, struct_name)
         self.current_return_type         = None  # 現在処理中の関数の戻り値型
         self.enums                       = {}    # name -> EnumDecl
         self.ident_renames               = {}    # Mryl変数名 → C 安全変数名
@@ -108,6 +109,7 @@ class CodeGenerator(
         self.capture_map                 = {}
         self.closure_env_types           = {}
         self.result_type_registry        = set()
+        self.option_type_registry        = set()
         self.ident_renames               = {}
 
         # 全関数をキャッシュ
@@ -133,6 +135,8 @@ class CodeGenerator(
         self._emit_builtin_types()
         # Result<T,E> typedef プレースホルダー
         self._emit("// __RESULT_TYPEDEFS_PLACEHOLDER__")
+        # Option<T> typedef プレースホルダー
+        self._emit("// __OPTION_TYPEDEFS_PLACEHOLDER__")
 
         # enum の C 定義を出力
         self.enums = {e.name: e for e in program.enums}
@@ -274,6 +278,22 @@ class CodeGenerator(
         else:
             self.code = [l for l in self.code if "// __RESULT_TYPEDEFS_PLACEHOLDER__" not in l]
 
+        # Option<T> typedef を差し込む
+        if self.option_type_registry:
+            option_lines = ["// ===== Option<T> type structs ====="]
+            for (inner_c, struct_name) in sorted(self.option_type_registry):
+                option_lines.append(f"typedef struct {{")
+                option_lines.append(f"    {inner_c} value;")
+                option_lines.append(f"    int has_value;")
+                option_lines.append(f"}} {struct_name};")
+            option_lines.append("")
+            for i, line in enumerate(self.code):
+                if "// __OPTION_TYPEDEFS_PLACEHOLDER__" in line:
+                    self.code[i:i + 1] = option_lines
+                    break
+        else:
+            self.code = [l for l in self.code if "// __OPTION_TYPEDEFS_PLACEHOLDER__" not in l]
+
         return '\n'.join(self.code)
 
     # ------------------------------------------------------------------
@@ -366,6 +386,8 @@ class CodeGenerator(
         else:
             return_type = self._type_to_c(func.return_type) if func.return_type else "void"
             if func.return_type and func.return_type.name == "Result":
+                self.current_return_type = return_type
+            elif func.return_type and func.return_type.name == "Option":
                 self.current_return_type = return_type
             else:
                 self.current_return_type = None

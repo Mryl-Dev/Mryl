@@ -1469,6 +1469,10 @@ class Parser:
                     self.expect(TokenKind.RBRACE)
                     return StructPattern(name, fields, line, col)
 
+            # Bare uppercase ident with no suffix → Option None (or unknown enum)
+            if name == "None":
+                return EnumPattern("None", "None", [], line, col)
+
             # BindingPattern: lowercase → always matches, binds value
             return BindingPattern(name, line, col)
 
