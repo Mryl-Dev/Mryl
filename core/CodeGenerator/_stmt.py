@@ -132,6 +132,13 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             init_expr = self._generate_expr_with_temps(stmt.init_expr, temp_string_mapping)
             self.current_return_type = _saved_rt
 
+        # Result<T, E> の init_expr 生成時に current_return_type を一時設定する
+        if type_node and type_node.name == "Result":
+            _saved_rt = self.current_return_type
+            self.current_return_type = var_type
+            init_expr = self._generate_expr_with_temps(stmt.init_expr, temp_string_mapping)
+            self.current_return_type = _saved_rt
+
         # 動的配列 (array_size == -1): MrylVec_<T>
         if type_node and type_node.array_size == -1:
             et = type_node.name

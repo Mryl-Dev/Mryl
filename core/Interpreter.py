@@ -945,11 +945,7 @@ class Interpreter:
             return {}, (val == pattern.value)
         if isinstance(pattern, BindingPattern):
             if pattern.name == "_":
-                raise MrylRuntimeError(
-                    f"'_' error arm reached with value: {val!r}",
-                    error_type="MatchError",
-                    call_stack=self.call_stack,
-                )
+                return {}, True
             return {pattern.name: val}, True
         if isinstance(pattern, EnumPattern):
             # Result型 Ok(v) / Err(e) パターン

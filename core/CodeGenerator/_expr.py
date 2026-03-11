@@ -324,10 +324,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             "0"
         )
 
-        # 単純な識別子（例: `r`）や添字アクセス（`a.b`, `a[0]`）は括弧不要。
-        # 二項演算子を含む複合式（スペースや演算子が入る）は括弧で包む。
-        _simple_expr = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*$')
-        scrutinee_c_wrapped = scrutinee_c if _simple_expr.match(scrutinee_c) else f"({scrutinee_c})"
+        scrutinee_c_wrapped = scrutinee_c
 
         # インデントレベルに基づいてスペースを計算する。
         # ind0: 閉じ } の位置 (indent_level と同列)
@@ -354,10 +351,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 has_catch_all = True
                 kw = "else" if not first else ""
                 lines.append(f"{ind1}{kw} {{" if kw else f"{ind1}{{")
-                lines.append(
-                    f'{ind2}mryl_panic("MatchError", "reached \'_\' error arm", '
-                    f'__func__, __FILE__, __LINE__);'
-                )
+                self.env.append({})
+                body_c       = self._generate_expr(arm.body)
+                body_is_void = (self._infer_expr_type(arm.body) == "void")
+                self.env.pop()
+                if body_is_void:
+                    lines.append(f"{ind2}{body_c};")
+                else:
+                    lines.append(f"{ind2}{mr} = {body_c};")
                 lines.append(f"{ind1}}}")
                 first = False
                 continue
@@ -413,9 +414,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         candidates = []
         has_non_wildcard = False
         for arm in arms:
-            if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
-                continue
-            has_non_wildcard = True
+            is_wildcard = isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_"
+            if not is_wildcard:
+                has_non_wildcard = True
             scope = self._pattern_binding_types(arm.pattern, scrutinee_type)
             self.env.append(scope)
             t = self._infer_expr_type(arm.body)
