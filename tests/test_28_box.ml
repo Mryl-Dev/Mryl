@@ -113,5 +113,6 @@ fn main() -> i32 {
     let val_4: i32 = *(*(*(*bb_4)));
     println("{}", val_4);   // 5
 
+    println("=== OK ===");
     return 0;
 }

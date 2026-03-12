@@ -91,5 +91,6 @@ fn main() -> i32 {
     };
     println("{}", e2);   // none_or_other
 
+    println("=== OK ===");
     return 0;
 }
