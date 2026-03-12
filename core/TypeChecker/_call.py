@@ -109,6 +109,8 @@ class TypeCheckerCallMixin:
                 return TypeNode('string')
             elif expr.method == 'find':
                 return TypeNode('Option', type_args=[TypeNode('i32')])
+            elif expr.method == 'split':
+                return TypeNode('string', array_size=-1)
             else:
                 raise TypeError_(f"string has no method '{expr.method}'", expr)
 

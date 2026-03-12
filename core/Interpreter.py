@@ -1220,6 +1220,11 @@ class Interpreter:
             if idx == -1:
                 return {'__option_tag__': 'none'}
             return {'__option_tag__': 'some', 'value': idx}
+        if method == 'split':
+            delim = args_eval[0]
+            if delim == '':
+                return list(obj)
+            return obj.split(delim)
         raise RuntimeError(f"Unknown string method: {method}")
 
     def _eval_result_method(self, obj: dict, method: str, args_eval: list):

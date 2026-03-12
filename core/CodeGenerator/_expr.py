@@ -640,6 +640,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 self.option_type_registry.add(("int32_t", "MrylOption_int32_t"))
                 arg = self._generate_expr(expr.args[0])
                 return f"mryl_str_find({obj_code}, {arg})"
+            elif expr.method == 'split':
+                self.uses_str_split = True
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_split({obj_code}, {arg})"
 
 
         obj         = self._generate_expr(expr.obj)

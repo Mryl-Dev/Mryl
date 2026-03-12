@@ -146,6 +146,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
                 "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
                 "f32": "float", "f64": "double", "bool": "int",
+                "string": "MrylString",
             }
             ct = _c_map.get(et, "int32_t")
             if init_expr_class == "ArrayLiteral" and stmt.init_expr.elements:
@@ -153,6 +154,10 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 elems_str = ", ".join(elements)
                 n         = len(stmt.init_expr.elements)
                 self._emit(f"MrylVec_{et} {stmt.name} = mryl_vec_{et}_from(({ct}[]){{{elems_str}}}, {n});")
+            elif stmt.init_expr is not None and init_expr_class != "ArrayLiteral":
+                # split() など Vec を返す式で初期化（例: mryl_str_split(...)）
+                rhs = self._generate_expr(stmt.init_expr)
+                self._emit(f"MrylVec_{et} {stmt.name} = {rhs};")
             else:
                 self._emit(f"MrylVec_{et} {stmt.name} = mryl_vec_{et}_new();")
             self.vec_var_types[stmt.name] = et
