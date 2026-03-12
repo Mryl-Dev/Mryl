@@ -1,4 +1,4 @@
-﻿from Lexer import TokenKind
+﻿from Lexer import TokenKind, Token
 from Ast import *
 from MrylError import SyntaxError_
 
@@ -401,11 +401,15 @@ class Parser:
         if self.current.kind == TokenKind.LT:
             self.advance()  # consume '<'
             type_args = []
-            while self.current.kind != TokenKind.GT:
+            while self.current.kind not in (TokenKind.GT, TokenKind.RSHIFT):
                 type_args.append(self.parse_type())
                 if self.current.kind == TokenKind.COMMA:
                     self.advance()  # consume ','
-            self.expect(TokenKind.GT)
+            # RSHIFT ">>" は入れ子型の閉じ括弧 2 つ分: 1 つ消費して残り 1 つを GT に書き換える
+            if self.current.kind == TokenKind.RSHIFT:
+                self.current = Token(TokenKind.GT, ">", self.current.line, self.current.column)
+            else:
+                self.expect(TokenKind.GT)
             return TypeNode(name, type_args=type_args, line=line, column=col)
 
         return TypeNode(name, line=line, column=col)
@@ -1039,6 +1043,8 @@ class Parser:
             return UnaryOp("!", self.parse_unary(), tok.line, tok.column)
         if self.match(TokenKind.TILDE):
             return UnaryOp("~", self.parse_unary(), tok.line, tok.column)
+        if self.match(TokenKind.STAR):
+            return UnaryOp("deref", self.parse_unary(), tok.line, tok.column)
         if tok.kind == TokenKind.AWAIT:
             self.advance()
             expr = self.parse_unary()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from CodeGenerator._proto import _CodeGeneratorBase
+from Ast import TypeNode
 
 
 class CodeGeneratorTypeMixin(_CodeGeneratorBase):
@@ -26,6 +27,15 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
 
         if type_node.name == "Future":
             return "MrylTask*"
+
+        if type_node.name == "Box":
+            # ユーザー定義 struct Box がある場合は通常の base_type として処理する
+            if not any(s.name == "Box" for s in self.structs):
+                if type_node.type_args:
+                    arg = type_node.type_args[0]
+                    inner_c = self._type_to_c(arg if hasattr(arg, 'name') else TypeNode(arg))
+                    return f"{inner_c}*"
+                return "void*"
 
         if type_node.name == "Result":
             if type_node.type_args and len(type_node.type_args) == 2:

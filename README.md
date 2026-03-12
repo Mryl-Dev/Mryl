@@ -233,6 +233,8 @@ Mryl は以下の機能を備えています：
 - **enum**：データを持てる列挙型（Rust 風）
 - **match 式**：パターンマッチングによる分岐
 - **Result\<T,E\>**：型安全なエラーハンドリング（`Ok` / `Err` + `.try()`）
+- **Option\<T\>**：値なし（`None`）/ 値あり（`Some(v)`）の安全な型、match によるパターンマッチ
+- **Box\<T\>**：ヒープポインタ型、`*b` デリファレンス、`.unbox()`、多重ポインタ（`Box<Box<T>>` 等）対応
 - **配列**：固定長配列と可変長配列（`T[]`）に対応
 - **制御構文**：if/else, while, for（Rust 風・包含 `to`・C 風）、`break` / `continue`
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
@@ -1323,6 +1325,88 @@ panic 時の出力例：
 
 ---
 
+## Option 型
+
+`Option<T>` は「値がある (`Some`)」か「値がない (`None`)」かを安全に扱う型です。  
+null / undefined の代替として使用し、`match` でパターンマッチングにより値を取り出します。
+
+### Option の生成
+
+```mryl
+let a: Option<i32> = Some(42);   // 値あり
+let b: Option<i32> = None;       // 値なし
+```
+
+### match によるパターンマッチング
+
+```mryl
+fn describe(opt: Option<i32>) -> i32 {
+    return match opt {
+        Some(v) => v,
+        None    => -1,
+    };
+}
+
+fn main() -> i32 {
+    println("{}", describe(Some(10)));  // 10
+    println("{}", describe(None));      // -1
+    return 0;
+}
+```
+
+### 関数の戻り値として
+
+```mryl
+fn safe_head(arr: i32[], n: i32) -> Option<i32> {
+    if (n == 0) { return None; }
+    return Some(arr[0]);
+}
+```
+
+---
+
+## Box 型（ヒープポインタ）
+
+`Box<T>` は値をヒープに確保し、ポインタとして保持します。  
+再帰的データ構造や動的割り当てが必要な場面で使用します。  
+ネイティブコンパイル時は `T*`（`malloc` によるヒープ確保）に変換されます。
+
+### Box の生成
+
+```mryl
+let b: Box<i32> = Box::new(42);
+```
+
+### デリファレンス（`*` 演算子）
+
+```mryl
+let val: i32 = *b;          // 42
+println("{}", *b);
+```
+
+### .unbox() メソッド
+
+```mryl
+let val: i32 = b.unbox();   // *b と等価
+```
+
+### 多重ポインタ（`Box<Box<T>>`）
+
+ネストした Box は `>>` が `RSHIFT` と衝突するため、内側から順に型引数を解釈します。
+
+```mryl
+let bb: Box<Box<i32>> = Box::new(Box::new(99));
+let inner: Box<i32>   = *bb;
+println("{}", *inner);           // 99
+println("{}", (*bb).unbox());    // 99
+
+// 3重・4重も同様
+let bbb: Box<Box<Box<i32>>>      = Box::new(Box::new(Box::new(7)));
+let bbbb: Box<Box<Box<Box<i32>>>> = Box::new(Box::new(Box::new(Box::new(3))));
+```
+
+---
+
 ## 配列（固定長）
 
 ### 配列型
@@ -1704,6 +1788,9 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_23_static.ml](../tests/test_23_static.ml) | `static fn` / `::` 呼び出し / fn 型参照 | ✅ Python + C + Native |
 | [tests/test_24_zero_div.ml](../tests/test_24_zero_div.ml) | ゼロ除算安全（`checked_div` / 境界値分析） | ✅ Python + C + Native |
 | [tests/test_25_parse_result.ml](../tests/test_25_parse_result.ml) | `parse_int` / `parse_f64` の Result 返し | ✅ Python + C + Native |
+| [tests/test_26_option.ml](../tests/test_26_option.ml) | `Option<T>`（`Some` / `None` / match パターン） | ✅ Python + C + Native |
+| [tests/test_27_option_adv.ml](../tests/test_27_option_adv.ml) | Option<T> 応用（関数引数・戻り値・ネスト）| ✅ Python + C + Native |
+| [tests/test_28_box.ml](../tests/test_28_box.ml) | `Box<T>`（生成・`*` deref・`.unbox()`・多重ポインタ）| ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

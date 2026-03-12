@@ -76,6 +76,8 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f"(!{operand})"
             elif expr.op == "~":
                 return f"(~{operand})"
+            elif expr.op == "deref":
+                return f"(*{operand})"
             else:
                 return f"({expr.op}{operand})"
 
@@ -602,6 +604,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             if expr.method == "unwrap_or":
                 default_code = self._generate_expr(expr.args[0]) if expr.args else "0"
                 return f"({obj_code}.is_ok ? {obj_code}.data.ok_val : {default_code})"
+
+        # Box<T> の .unbox() メソッド
+        if obj_type.endswith("*") or obj_type == "Box" or obj_type.startswith("Box_"):
+            if expr.method == "unbox":
+                obj_code = self._generate_expr(expr.obj)
+                return f"(*{obj_code})"
 
         # string 型の組み込みメソッド
         if obj_type == "string":

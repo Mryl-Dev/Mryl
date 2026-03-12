@@ -43,6 +43,8 @@
 - **fix キーワード**: 不変変数・不変関数パラメータの宣言
 - **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
 - **string 操作**: 連結（`+`）・比較（`==` / `!=`）・組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
+- **Option\<T\>**: 値なし（`None`）/ 値あり（`Some(v)`）の安全な型、match によるパターンマッチ
+- **Box\<T\>**: ヒープポインタ型（C では `T*` に変換）、`*b` デリファレンス、`.unbox()`、多重ポインタ対応
 - **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
 - **async / await**: 状態機械 + シングルスレッドスケジューラによる非同期処理
 
@@ -123,7 +125,10 @@ Mryl/
 │   ├── test_22_input.ml             # read_line / parse_int / parse_f64（Result<T, string> 返し）
 │   ├── test_23_static.ml            # static fn / :: 呼び出し / StaticMethodRef
 │   ├── test_24_zero_div.ml          # ゼロ除算安全（checked_div・境界値分析）
-│   └── test_25_parse_result.ml      # parse_int / parse_f64 の Result 返し
+│   ├── test_25_parse_result.ml      # parse_int / parse_f64 の Result 返し
+│   ├── test_26_option.ml            # Option<T>（Some / None / match パターン）
+│   ├── test_27_option_adv.ml        # Option<T> 応用（関数引数・戻り値・ネスト）
+│   └── test_28_box.ml               # Box<T>（生成・* deref・.unbox()・多重ポインタ）
 ├── my/                               # 動作確認用 Mryl コード置き場
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
@@ -253,6 +258,29 @@ Mryl/
 | C コード生成 | 関数定義の前にプロトタイプ宣言を出力 |
 
 ### 3.11 string 操作
+
+### 3.12 Option\<T\>（安全な省略可能値）
+
+| 機能 | 説明 |
+|------|------|
+| `Some(v)` | 値 `v` を持つ Option 値の生成 |
+| `None` | 値なし Option 値の生成 |
+| `match opt { Some(v) => ..., None => ... }` | パターンマッチによる値の取り出し |
+| 関数引数・戻り値 | `Option<T>` 型の受け渡し・返却 |
+| TypeChecker | `Some` → `Option<推論型>`、`None` → `Option<_>`（文脈から解決） |
+| CodeGenerator | 組み込み union 型 `Mryl_Option_T` に展開 |
+
+### 3.13 Box\<T\>（ヒープポインタ）
+
+| 機能 | 説明 |
+|------|------|
+| `Box::new(v)` | 値 `v` をヒープに確保し `Box<T>` を返す |
+| `*b` | デリファレンス（`UnaryOp("deref")`） |
+| `b.unbox()` | `.unbox()` メソッド — `*b` と等価 |
+| `Box<Box<T>>` | 多重ポインタ（2〜4 重以上） |
+| TypeChecker | `Box<T>` → `TypeNode("Box", type_args=[inner])` |
+| CodeGenerator | `Box<T>` → `T*`、`Box::new(v)` → `({ T* p = malloc(sizeof(T)); *p = v; p; })` |
+| ユーザー定義構造体との共存 | `struct Box<T>` を定義した場合は組み込み Box ではなくユーザー定義を優先 |
 
 #### 演算子
 

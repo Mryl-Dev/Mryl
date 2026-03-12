@@ -110,6 +110,15 @@ class TypeCheckerCallMixin:
             else:
                 raise TypeError_(f"string has no method '{expr.method}'", expr)
 
+        # Box<T> の .unbox() メソッド（ユーザー定義 struct Box がない場合のみ）
+        if obj_type.name == "Box" and not self.structs.get("Box"):
+            if expr.method == 'unbox':
+                if obj_type.type_args:
+                    t = obj_type.type_args[0]
+                    return t if isinstance(t, TypeNode) else TypeNode(t)
+                return TypeNode("any")
+            raise TypeError_(f"Box has no method '{expr.method}'", expr)
+
         # Result<T,E> のメソッド
         if obj_type.name == "Result":
             if expr.method in ("is_ok", "is_err"):

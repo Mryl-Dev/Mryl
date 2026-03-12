@@ -85,6 +85,12 @@ class TypeCheckerExprMixin:
             return self.check_lambda(expr)
 
         if isinstance(expr, EnumVariantExpr):
+            # Box::new(v) — Box<T> を返す（ユーザー定義 struct Box がない場合のみ）
+            if expr.enum_name == "Box" and expr.variant_name == "new" and expr.args \
+                    and not self.structs.get("Box"):
+                inner = self.check_expr(expr.args[0])
+                return TypeNode("Box", type_args=[inner])
+
             # TypeName::member が static fn の呼び出し/参照か enum variant かを判定する
             struct = self.structs.get(expr.enum_name)
             if struct:
@@ -267,6 +273,11 @@ class TypeCheckerExprMixin:
             if not self.is_numeric_type(operand.name):
                 raise TypeError_(f"Postfix {expr.op} requires numeric type", expr)
             return operand
+
+        if expr.op == "deref":
+            if operand.name == "Box" and operand.type_args:
+                return operand.type_args[0]
+            raise TypeError_("Deref (*) requires Box<T>", expr)
 
         return operand
 

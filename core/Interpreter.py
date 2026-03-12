@@ -204,6 +204,10 @@ class Interpreter:
                 return {'__result_tag__': 'err', 'value': args[0] if args else None}
             if name == "Some":
                 return {'__option_tag__': 'some', 'value': args[0] if args else None}
+            if name == "Box":
+                # Box::new(v) は EnumVariantExpr で処理されるが、
+                # FunctionCall("Box", [v]) として来る場合も対応
+                return {'__box__': True, 'value': args[0] if args else None}
             raise RuntimeError(f"Undefined function: {name}")
 
         entry = self.functions[name]
@@ -835,6 +839,12 @@ class Interpreter:
         raise RuntimeError("await: expression is not a Future")
 
     def _eval_enum_variant_expr(self, expr: EnumVariantExpr, env):
+        # Box::new(v) — ヒープアロケーション相当（ユーザー定義 struct Box がない場合のみ）
+        if expr.enum_name == "Box" and expr.variant_name == "new" \
+                and "Box" not in self.structs:
+            val = self.eval_expr(expr.args[0], env) if expr.args else None
+            return {'__box__': True, 'value': val}
+
         struct = self.structs.get(expr.enum_name)
         if struct:
             method = next(
@@ -936,6 +946,10 @@ class Interpreter:
         if expr.op == "-":  return -v
         if expr.op == "!":  return not self.is_truthy(v)
         if expr.op == "~":  return ~int(v)
+        if expr.op == "deref":
+            if isinstance(v, dict) and v.get('__box__'):
+                return v['value']
+            raise RuntimeError(f"Deref (*) requires a Box value, got: {v!r}")
         raise RuntimeError(f"Unknown unary operator: {expr.op}")
 
     def _match_pattern(self, pattern, val):
@@ -1149,6 +1163,11 @@ class Interpreter:
 
         if isinstance(obj, dict) and '__result_tag__' in obj:
             return self._eval_result_method(obj, expr.method, args_eval)
+
+        if isinstance(obj, dict) and '__box__' in obj:
+            if expr.method == 'unbox':
+                return obj['value']
+            raise RuntimeError(f"Unknown Box method: {expr.method}")
 
         if isinstance(obj, dict) and '__struct_name__' in obj:
             return self._eval_struct_method(obj, expr.method, args_eval)

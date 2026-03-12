@@ -273,6 +273,10 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
             return "i32"
 
         if expr_class == "EnumVariantExpr":
+            # Box::new(v) → ポインタ型を返す
+            if expr.enum_name == "Box" and expr.variant_name == "new" and expr.args:
+                inner = self._infer_expr_type(expr.args[0])
+                return f"{self._type_to_c_base(inner)}*"
             # TypeName::member が static fn ならその戻り値型を返す
             for struct in self.structs:
                 if struct.name == expr.enum_name:
@@ -283,6 +287,18 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     if method and method.return_type:
                         return method.return_type.name
             return expr.enum_name  # enum variant の場合は enum 名を型とする
+
+        if expr_class == "UnaryOp":
+            if expr.op == "deref":
+                operand_t = self._infer_expr_type(expr.operand)
+                # C pointer: "int32_t*" → "int32_t"
+                if operand_t.endswith("*"):
+                    return operand_t[:-1]
+                # Box_T 形式: "Box_i32" → "i32"
+                if operand_t.startswith("Box_"):
+                    return operand_t[4:]
+                return "i32"
+            return self._infer_expr_type(expr.operand)
 
         return "i32"
 
