@@ -635,6 +635,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 a0 = self._generate_expr(expr.args[0])
                 a1 = self._generate_expr(expr.args[1])
                 return f"mryl_str_replace({obj_code}, {a0}, {a1})"
+            elif expr.method == 'find':
+                self.uses_str_find = True
+                self.option_type_registry.add(("int32_t", "MrylOption_int32_t"))
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_find({obj_code}, {arg})"
+
 
         obj         = self._generate_expr(expr.obj)
         args_list   = [self._generate_expr(arg) for arg in expr.args]

@@ -107,6 +107,8 @@ class TypeCheckerCallMixin:
                 return TypeNode('string')
             elif expr.method == 'replace':
                 return TypeNode('string')
+            elif expr.method == 'find':
+                return TypeNode('Option', type_args=[TypeNode('i32')])
             else:
                 raise TypeError_(f"string has no method '{expr.method}'", expr)
 

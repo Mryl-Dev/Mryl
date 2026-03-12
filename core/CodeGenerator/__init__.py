@@ -86,6 +86,7 @@ class CodeGenerator(
         self.closure_env_types           = {}    # {var_name: lambda_name}
         self.result_type_registry        = set() # set of (ok_c, err_c, struct_name)
         self.option_type_registry        = set() # set of (inner_c, struct_name)
+        self.uses_str_find               = False # mryl_str_find 使用フラグ
         self.current_return_type         = None  # 現在処理中の関数の戻り値型
         self.enums                       = {}    # name -> EnumDecl
         self.ident_renames               = {}    # Mryl変数名 → C 安全変数名
@@ -110,6 +111,7 @@ class CodeGenerator(
         self.closure_env_types           = {}
         self.result_type_registry        = set()
         self.option_type_registry        = set()
+        self.uses_str_find               = False
         self.ident_renames               = {}
 
         # 全関数をキャッシュ
@@ -287,6 +289,15 @@ class CodeGenerator(
                 option_lines.append(f"    int has_value;")
                 option_lines.append(f"}} {struct_name};")
             option_lines.append("")
+            if self.uses_str_find:
+                option_lines += [
+                    "static inline MrylOption_int32_t mryl_str_find(MrylString s, MrylString pat) {",
+                    "    char* p = strstr(s.data, pat.data);",
+                    "    if (!p) return (MrylOption_int32_t){0, 0};",
+                    "    return (MrylOption_int32_t){(int32_t)(p - s.data), 1};",
+                    "}",
+                    "",
+                ]
             for i, line in enumerate(self.code):
                 if "// __OPTION_TYPEDEFS_PLACEHOLDER__" in line:
                     self.code[i:i + 1] = option_lines
