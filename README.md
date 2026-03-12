@@ -244,7 +244,7 @@ Mryl は以下の機能を備えています：
 - **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
-- **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
+- **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace` / `find`）
 - **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
 - **構造化エラー出力**：タイムスタンプ付きスタックトレース + 行番号
 
@@ -1711,6 +1711,13 @@ println("lo={}", "WORLD".to_lower());              // world
 
 // 置換（string）
 println("rep={}", "foo bar foo".replace("foo", "baz")); // baz bar baz
+
+// 部分文字列の位置（Option<i32>）
+let pos = "hello world".find("world");
+match pos {
+    Some(i) => println("found at {}", i),  // found at 6
+    None    => println("not found"),
+};
 ```
 
 | メソッド | 引数 | 戻り値 | 説明 |
@@ -1723,6 +1730,7 @@ println("rep={}", "foo bar foo".replace("foo", "baz")); // baz bar baz
 | `to_upper()` | — | `string` | 大文字変換 |
 | `to_lower()` | — | `string` | 小文字変換 |
 | `replace(from, to)` | `string, string` | `string` | 全出現箇所を置換 |
+| `find(pat)` | `string` | `Option<i32>` | 最初の出現位置を返す（なければ `None`） |
 
 ---
 
@@ -1750,7 +1758,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fn 型パラメータ**（高階関数・コールバック）  
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
-✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 8 種）  
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 9 種）  
 ✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
 ✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
 ✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
@@ -1791,6 +1799,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_26_option.ml](../tests/test_26_option.ml) | `Option<T>`（`Some` / `None` / match パターン） | ✅ Python + C + Native |
 | [tests/test_27_option_adv.ml](../tests/test_27_option_adv.ml) | Option<T> 応用（関数引数・戻り値・ネスト）| ✅ Python + C + Native |
 | [tests/test_28_box.ml](../tests/test_28_box.ml) | `Box<T>`（生成・`*` deref・`.unbox()`・多重ポインタ）| ✅ Python + C + Native |
+| [tests/test_29_string_find.ml](../tests/test_29_string_find.ml) | `string.find()`（`Option<i32>` 返し・各種パターン） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

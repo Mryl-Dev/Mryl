@@ -42,7 +42,7 @@
 - **fn 型パラメータ**: 関数をコールバックとして渡せる高階関数
 - **fix キーワード**: 不変変数・不変関数パラメータの宣言
 - **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
-- **string 操作**: 連結（`+`）・比較（`==` / `!=`）・組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
+- **string 操作**: 連結（`+`）・比較（`==` / `!=`）・組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace` / `find`）
 - **Option\<T\>**: 値なし（`None`）/ 値あり（`Some(v)`）の安全な型、match によるパターンマッチ
 - **Box\<T\>**: ヒープポインタ型（C では `T*` に変換）、`*b` デリファレンス、`.unbox()`、多重ポインタ対応
 - **ユーザー入力**: `read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
@@ -128,7 +128,8 @@ Mryl/
 │   ├── test_25_parse_result.ml      # parse_int / parse_f64 の Result 返し
 │   ├── test_26_option.ml            # Option<T>（Some / None / match パターン）
 │   ├── test_27_option_adv.ml        # Option<T> 応用（関数引数・戻り値・ネスト）
-│   └── test_28_box.ml               # Box<T>（生成・* deref・.unbox()・多重ポインタ）
+│   ├── test_28_box.ml               # Box<T>（生成・* deref・.unbox()・多重ポインタ）
+│   └── test_29_string_find.ml       # string.find()（Option<i32> 返し・各種パターン）
 ├── my/                               # 動作確認用 Mryl コード置き場
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
@@ -303,6 +304,7 @@ Mryl/
 | `s.to_upper()` | — | `string` | `mryl_str_to_upper(s)` |
 | `s.to_lower()` | — | `string` | `mryl_str_to_lower(s)` |
 | `s.replace(from, to)` | `string, string` | `string` | `mryl_str_replace(s, from, to)` |
+| `s.find(pat)` | `string` | `Option<i32>` | `mryl_str_find(s, pat)` |
 
 すべてのメソッドは `_header.py` が生成するインライン C ヘルパー関数へ展開されます。
 
