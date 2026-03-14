@@ -79,9 +79,16 @@ class TypeCheckerCallMixin:
     def check_method_call(self, expr: MethodCall):
         obj_type = self.check_expr(expr.obj)
 
-        # 動的配列 (T[]) のメソッド
+        # 動的配列 (T[]) / Iter<T> のメソッド
         if obj_type.array_size == -1:
-            elem_type = TypeNode(obj_type.name)
+            # Iter<T> は type_args[0] が要素型、それ以外は name が要素型
+            if obj_type.name == "Iter" and obj_type.type_args:
+                raw = obj_type.type_args[0]
+                elem_type = raw if isinstance(raw, TypeNode) else TypeNode(raw)
+            else:
+                elem_type = TypeNode(obj_type.name, type_args=obj_type.type_args)
+
+            # ── 既存の配列操作 ──
             if expr.method == 'push':
                 return TypeNode('void')
             elif expr.method == 'pop':
@@ -94,6 +101,12 @@ class TypeCheckerCallMixin:
                 return elem_type
             elif expr.method == 'insert':
                 return TypeNode('void')
+
+            # ── Iter<T> / LINQ 操作 ──
+            elif expr.method in ('select', 'filter', 'take', 'skip', 'select_many', 'to_array',
+                                 'aggregate', 'for_each', 'count', 'first', 'any', 'all'):
+                return self._check_iter_method(expr, elem_type)
+
             else:
                 raise TypeError_(f"Dynamic array has no method '{expr.method}'", expr)
 
@@ -107,8 +120,21 @@ class TypeCheckerCallMixin:
                 return TypeNode('string')
             elif expr.method == 'replace':
                 return TypeNode('string')
+            elif expr.method == 'find':
+                return TypeNode('Option', type_args=[TypeNode('i32')])
+            elif expr.method == 'split':
+                return TypeNode('string', array_size=-1)
             else:
                 raise TypeError_(f"string has no method '{expr.method}'", expr)
+
+        # Box<T> の .unbox() メソッド（ユーザー定義 struct Box がない場合のみ）
+        if obj_type.name == "Box" and not self.structs.get("Box"):
+            if expr.method == 'unbox':
+                if obj_type.type_args:
+                    t = obj_type.type_args[0]
+                    return t if isinstance(t, TypeNode) else TypeNode(t)
+                return TypeNode("any")
+            raise TypeError_(f"Box has no method '{expr.method}'", expr)
 
         # Result<T,E> のメソッド
         if obj_type.name == "Result":
@@ -185,9 +211,11 @@ class TypeCheckerCallMixin:
 
         func = self.functions.get(expr.name)
         if not func:
-            # Ok/Err はビルトイン扱い
+            # Ok/Err/Some はビルトイン扱い
             if expr.name in ("Ok", "Err"):
                 return TypeNode("Result")
+            if expr.name == "Some":
+                return TypeNode("Option")
             raise TypeError_(f"Undefined function: {expr.name}", expr)
 
         # 1. 引数数チェック（builtin は除外）
@@ -281,3 +309,78 @@ class TypeCheckerCallMixin:
             rt = func.return_type if func.return_type is not None else TypeNode("void")
             return TypeNode("Future", type_args=[rt])
         return func.return_type
+
+    # ============================================
+    # Iter<T> メソッドの型検査
+    # ============================================
+    def _check_iter_method(self, expr: MethodCall, elem_type: 'TypeNode'):
+        """動的配列 / Iter<T> の LINQ 系メソッドの戻り値型を返す。"""
+
+        def _iter(t: 'TypeNode') -> 'TypeNode':
+            """Iter<T> を表す TypeNode を生成する（内部表現は array_size=-1）。"""
+            return TypeNode(t.name, type_args=t.type_args, array_size=-1)
+
+        def _fn_return_type(arg_expr) -> 'TypeNode':
+            """ラムダ / VarRef から戻り値型を推論する。フォールバックは elem_type。"""
+            from Ast import Lambda, VarRef
+            if isinstance(arg_expr, Lambda):
+                t = getattr(arg_expr, 'inferred_return_type', None)
+                if t is not None:
+                    return t if isinstance(t, TypeNode) else TypeNode(t)
+            elif isinstance(arg_expr, VarRef):
+                for scope in reversed(self.env):
+                    if arg_expr.name in scope:
+                        fn_t = scope[arg_expr.name]
+                        if isinstance(fn_t, TypeNode) and fn_t.name in ('fn', 'async_fn') and fn_t.type_args:
+                            raw = fn_t.type_args[-1]
+                            return raw if isinstance(raw, TypeNode) else TypeNode(raw)
+            # フォールバック: 要素型と同一
+            return elem_type
+
+        method = expr.method
+
+        if method == 'select':
+            # select(fn(T)->U) -> Iter<U>
+            u = _fn_return_type(expr.args[0]) if expr.args else elem_type
+            return _iter(u)
+
+        if method == 'filter':
+            # filter(fn(T)->bool) -> Iter<T>
+            return _iter(elem_type)
+
+        if method in ('take', 'skip'):
+            # take/skip(i32) -> Iter<T>
+            return _iter(elem_type)
+
+        if method == 'select_many':
+            # select_many(fn(T)->U[]) -> Iter<U>
+            # U を fn の戻り値の要素型から取得（配列型の name を使う）
+            u = _fn_return_type(expr.args[0]) if expr.args else elem_type
+            return _iter(u)
+
+        if method == 'to_array':
+            # to_array() -> T[]
+            return TypeNode(elem_type.name, type_args=elem_type.type_args, array_size=-1)
+
+        if method == 'aggregate':
+            if len(expr.args) == 1:
+                # 初期値なし: Result<T, string>
+                return TypeNode('Result', type_args=[elem_type, TypeNode('string')])
+            else:
+                # 初期値あり: 初期値の型 U を返す
+                u = self.check_expr(expr.args[0]) if expr.args else elem_type
+                return u
+
+        if method == 'for_each':
+            return TypeNode('void')
+
+        if method == 'count':
+            return TypeNode('i32')
+
+        if method == 'first':
+            return TypeNode('Result', type_args=[elem_type, TypeNode('string')])
+
+        if method in ('any', 'all'):
+            return TypeNode('bool')
+
+        raise TypeError_(f"Unknown iter method '{method}'", expr)

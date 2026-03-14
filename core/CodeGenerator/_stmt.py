@@ -125,6 +125,20 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
 
         init_expr = self._generate_expr_with_temps(stmt.init_expr, temp_string_mapping)
 
+        # Option<T> の init_expr 生成時に current_return_type を一時設定する
+        if type_node and type_node.name == "Option":
+            _saved_rt = self.current_return_type
+            self.current_return_type = var_type
+            init_expr = self._generate_expr_with_temps(stmt.init_expr, temp_string_mapping)
+            self.current_return_type = _saved_rt
+
+        # Result<T, E> の init_expr 生成時に current_return_type を一時設定する
+        if type_node and type_node.name == "Result":
+            _saved_rt = self.current_return_type
+            self.current_return_type = var_type
+            init_expr = self._generate_expr_with_temps(stmt.init_expr, temp_string_mapping)
+            self.current_return_type = _saved_rt
+
         # 動的配列 (array_size == -1): MrylVec_<T>
         if type_node and type_node.array_size == -1:
             et = type_node.name
@@ -132,6 +146,7 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
                 "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
                 "f32": "float", "f64": "double", "bool": "int",
+                "string": "MrylString",
             }
             ct = _c_map.get(et, "int32_t")
             if init_expr_class == "ArrayLiteral" and stmt.init_expr.elements:
@@ -139,6 +154,10 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 elems_str = ", ".join(elements)
                 n         = len(stmt.init_expr.elements)
                 self._emit(f"MrylVec_{et} {stmt.name} = mryl_vec_{et}_from(({ct}[]){{{elems_str}}}, {n});")
+            elif stmt.init_expr is not None and init_expr_class != "ArrayLiteral":
+                # split() など Vec を返す式で初期化（例: mryl_str_split(...)）
+                rhs = self._generate_expr(stmt.init_expr)
+                self._emit(f"MrylVec_{et} {stmt.name} = {rhs};")
             else:
                 self._emit(f"MrylVec_{et} {stmt.name} = mryl_vec_{et}_new();")
             self.vec_var_types[stmt.name] = et
@@ -193,6 +212,10 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 if type_node.name == "Result" and getattr(type_node, 'type_args', None):
                     ok_name = type_node.type_args[0].name if type_node.type_args else "i32"
                     mryl_name = f"Result_{ok_name}"
+                # Option<T> は "MrylOption_<inner>" 形式で env 登録する
+                elif type_node.name == "Option" and getattr(type_node, 'type_args', None):
+                    inner_name = type_node.type_args[0].name if type_node.type_args else "int32_t"
+                    mryl_name = f"MrylOption_{inner_name}"
                 else:
                     # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
                     mryl_name = type_node.name
@@ -219,6 +242,13 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         var_type = self._type_to_c(type_node)
         init_expr = self._generate_expr_with_temps(stmt.init_expr, {})
 
+        # Option<T> の init_expr 生成時に current_return_type を一時設定する
+        if type_node and type_node.name == "Option":
+            _saved_rt = self.current_return_type
+            self.current_return_type = var_type
+            init_expr = self._generate_expr_with_temps(stmt.init_expr, {})
+            self.current_return_type = _saved_rt
+
         # 固定長配列
         if type_node and type_node.array_size is not None and type_node.array_size > 0:
             base_type = self._type_to_c_base(type_node.name)
@@ -239,6 +269,10 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             if type_node.name == "Result" and getattr(type_node, 'type_args', None):
                 ok_name = type_node.type_args[0].name if type_node.type_args else "i32"
                 mryl_name = f"Result_{ok_name}"
+            # Option<T> は "MrylOption_<inner>" 形式で env 登録する
+            elif type_node.name == "Option" and getattr(type_node, 'type_args', None):
+                inner_name = type_node.type_args[0].name if type_node.type_args else "int32_t"
+                mryl_name = f"MrylOption_{inner_name}"
             else:
                 mryl_name = type_node.name
                 if getattr(type_node, 'type_args', None):

@@ -34,6 +34,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             return "1" if expr.value else "0"
 
         if expr_class == "VarRef":
+            if expr.name == "None":
+                struct_name = self.current_return_type or "MrylOption_int32_t"
+                return f"({struct_name}){{0, 0}}"
             if self.sm_mode and expr.name in self.sm_vars:
                 return f"__sm->{expr.name}"
             if expr.name in self.capture_map:
@@ -73,6 +76,8 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f"(!{operand})"
             elif expr.op == "~":
                 return f"(~{operand})"
+            elif expr.op == "deref":
+                return f"(*{operand})"
             else:
                 return f"({expr.op}{operand})"
 
@@ -129,6 +134,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             for scope in reversed(self.env):
                 if expr.name in scope and scope[expr.name] in ('fn', 'fn_closure'):
                     return self._generate_function_call(expr)
+            # Ok/Err/Some は compound literal 生成が必要なので _generate_function_call に委譲
+            if expr.name in ("Ok", "Err", "Some"):
+                return self._generate_function_call(expr)
             args = [self._generate_expr_with_temps(arg, temp_string_mapping) for arg in expr.args]
             if expr.name in ["print", "println"]:
                 return self._generate_print_call(expr)
@@ -174,6 +182,11 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f"({struct_name}){{1, {{.ok_val = {val_code}}}}}"
             else:
                 return f"({struct_name}){{0, {{.err_val = {val_code}}}}}"
+
+        if expr.name == "Some":
+            val_code    = self._generate_expr(expr.args[0]) if expr.args else "0"
+            struct_name = self.current_return_type or "MrylOption_int32_t"
+            return f"({struct_name}){{{val_code}, 1}}"
 
         for scope in reversed(self.env):
             if expr.name in scope and scope[expr.name] == "async_fn":
@@ -313,10 +326,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             "0"
         )
 
-        # 単純な識別子（例: `r`）や添字アクセス（`a.b`, `a[0]`）は括弧不要。
-        # 二項演算子を含む複合式（スペースや演算子が入る）は括弧で包む。
-        _simple_expr = _re.compile(r'^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*|\[[^\]]+\])*$')
-        scrutinee_c_wrapped = scrutinee_c if _simple_expr.match(scrutinee_c) else f"({scrutinee_c})"
+        scrutinee_c_wrapped = scrutinee_c
 
         # インデントレベルに基づいてスペースを計算する。
         # ind0: 閉じ } の位置 (indent_level と同列)
@@ -343,10 +353,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 has_catch_all = True
                 kw = "else" if not first else ""
                 lines.append(f"{ind1}{kw} {{" if kw else f"{ind1}{{")
-                lines.append(
-                    f'{ind2}mryl_panic("MatchError", "reached \'_\' error arm", '
-                    f'__func__, __FILE__, __LINE__);'
-                )
+                self.env.append({})
+                body_c       = self._generate_expr(arm.body)
+                body_is_void = (self._infer_expr_type(arm.body) == "void")
+                self.env.pop()
+                if body_is_void:
+                    lines.append(f"{ind2}{body_c};")
+                else:
+                    lines.append(f"{ind2}{mr} = {body_c};")
                 lines.append(f"{ind1}}}")
                 first = False
                 continue
@@ -402,9 +416,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         candidates = []
         has_non_wildcard = False
         for arm in arms:
-            if isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_":
-                continue
-            has_non_wildcard = True
+            is_wildcard = isinstance(arm.pattern, BindingPattern) and arm.pattern.name == "_"
+            if not is_wildcard:
+                has_non_wildcard = True
             scope = self._pattern_binding_types(arm.pattern, scrutinee_type)
             self.env.append(scope)
             t = self._infer_expr_type(arm.body)
@@ -441,6 +455,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return {pattern.bindings[0]: ok_type}
             if pattern.enum_name == "Err" and pattern.bindings:
                 return {pattern.bindings[0]: "string"}
+            # Option<T> の Some(v) パターン
+            if pattern.enum_name == "Some" and pattern.bindings:
+                inner_type = "i32"
+                if scrutinee_type.startswith("MrylOption_"):
+                    inner_type = scrutinee_type[len("MrylOption_"):]
+                return {pattern.bindings[0]: inner_type}
             enum_decl = self.enums.get(pattern.enum_name)
             if enum_decl:
                 variant = next(
@@ -491,6 +511,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 field    = "ok_val" if is_ok else "err_val"
                 bindings = [f"__auto_type {name} = {mv}.data.{field};" for name in pattern.bindings]
                 return cond, bindings
+            # Option<T> の Some(v) / None パターン
+            if enum_name == "Some":
+                cond     = f"{mv}.has_value"
+                bindings = [f"__auto_type {name} = {mv}.value;" for name in pattern.bindings]
+                return cond, bindings
+            if enum_name == "None":
+                return f"!{mv}.has_value", []
             enum_decl    = self.enums.get(enum_name)
             has_data     = enum_decl and any(v.fields for v in enum_decl.variants)
             if has_data:
@@ -551,6 +578,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 val = self._generate_expr(expr.args[1])
                 return f"mryl_vec_{et}_insert(&{obj_name}, {idx}, {val})"
 
+            # ── Iter<T> / LINQ 系メソッド ──────────────────────────
+            elif expr.method in ('select', 'filter', 'take', 'skip',
+                                 'select_many', 'to_array',
+                                 'aggregate', 'for_each',
+                                 'count', 'first', 'any', 'all'):
+                return self._generate_iter_method(expr, et, obj_name)
+
         # Result<T,E> のメソッド
         obj_type = self._infer_expr_type(expr.obj)
         if obj_type == "Result" or obj_type.startswith("Result_"):
@@ -578,6 +612,12 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 default_code = self._generate_expr(expr.args[0]) if expr.args else "0"
                 return f"({obj_code}.is_ok ? {obj_code}.data.ok_val : {default_code})"
 
+        # Box<T> の .unbox() メソッド
+        if obj_type.endswith("*") or obj_type == "Box" or obj_type.startswith("Box_"):
+            if expr.method == "unbox":
+                obj_code = self._generate_expr(expr.obj)
+                return f"(*{obj_code})"
+
         # string 型の組み込みメソッド
         if obj_type == "string":
             obj_code = self._generate_expr(expr.obj)
@@ -602,10 +642,189 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 a0 = self._generate_expr(expr.args[0])
                 a1 = self._generate_expr(expr.args[1])
                 return f"mryl_str_replace({obj_code}, {a0}, {a1})"
+            elif expr.method == 'find':
+                self.uses_str_find = True
+                self.option_type_registry.add(("int32_t", "MrylOption_int32_t"))
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_find({obj_code}, {arg})"
+            elif expr.method == 'split':
+                self.uses_str_split = True
+                arg = self._generate_expr(expr.args[0])
+                return f"mryl_str_split({obj_code}, {arg})"
+
 
         obj         = self._generate_expr(expr.obj)
         args_list   = [self._generate_expr(arg) for arg in expr.args]
         struct_name = obj_type   # Bug#27: obj の型から struct 名を解決
         all_args    = [f"&{obj}"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
+
+    def _generate_iter_method(self, expr, et: str, obj_c: str) -> str:
+        """Iter<T> / LINQ メソッドの C statement expression を生成する。
+
+        Args:
+            expr   : MethodCall ノード
+            et     : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
+            obj_c  : レシーバの C 式文字列
+        """
+        from Ast import Lambda
+
+        method = expr.method
+        idx    = self.loop_counter
+        self.loop_counter += 1
+        ct     = self._type_to_c_base(et)    # Mryl 型 → C 型 (e.g. "int32_t")
+        i_var  = f"__i_{idx}"
+
+        def _lam(arg_idx: int) -> str:
+            """引数 arg_idx のラムダ / 関数参照を C 関数名として返す。"""
+            arg = expr.args[arg_idx]
+            if isinstance(arg, Lambda):
+                return self._generate_lambda(arg)
+            return self._generate_expr(arg)
+
+        # ── select ──────────────────────────────────────────────
+        if method == 'select':
+            lam = _lam(0)
+            # 出力型推論: Lambda の inferred_return_type か fallback で et
+            lam_arg = expr.args[0]
+            if isinstance(lam_arg, Lambda):
+                inferred = getattr(lam_arg, 'inferred_return_type', None)
+                out_et = inferred.name if inferred else et
+            else:
+                out_et = et
+            out_ct = self._type_to_c_base(out_et)
+            r = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{out_et} {r} = mryl_vec_{out_et}_new(); "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"mryl_vec_{out_et}_push(&{r}, {lam}({obj_c}.data[{i_var}])); }} "
+                f"{r}; }})"
+            )
+
+        # ── filter ──────────────────────────────────────────────
+        if method == 'filter':
+            lam = _lam(0)
+            r = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{et} {r} = mryl_vec_{et}_new(); "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if ({lam}({obj_c}.data[{i_var}])) {{ "
+                f"mryl_vec_{et}_push(&{r}, {obj_c}.data[{i_var}]); }} }} "
+                f"{r}; }})"
+            )
+
+        # ── take ─────────────────────────────────────────────────
+        if method == 'take':
+            n   = self._generate_expr(expr.args[0])
+            r   = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{et} {r} = {obj_c}; "
+                f"if ({n} < {r}.len) {r}.len = {n}; "
+                f"{r}; }})"
+            )
+
+        # ── skip ─────────────────────────────────────────────────
+        if method == 'skip':
+            n   = self._generate_expr(expr.args[0])
+            s   = f"__s_{idx}"
+            r   = f"__iter_{idx}"
+            return (
+                f"({{ int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len); "
+                f"MrylVec_{et} {r}; "
+                f"{r}.data = {obj_c}.data + {s}; "
+                f"{r}.len  = {obj_c}.len - {s}; "
+                f"{r}.cap  = {obj_c}.cap - {s}; "
+                f"{r}; }})"
+            )
+
+        # ── to_array ─────────────────────────────────────────────
+        if method == 'to_array':
+            return obj_c
+
+        # ── count ────────────────────────────────────────────────
+        if method == 'count':
+            return f"{obj_c}.len"
+
+        # ── any ──────────────────────────────────────────────────
+        if method == 'any':
+            lam = _lam(0)
+            found = f"__found_{idx}"
+            return (
+                f"({{ int {found} = 0; "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if ({lam}({obj_c}.data[{i_var}])) {{ {found} = 1; break; }} }} "
+                f"{found}; }})"
+            )
+
+        # ── all ──────────────────────────────────────────────────
+        if method == 'all':
+            lam = _lam(0)
+            ok  = f"__ok_{idx}"
+            return (
+                f"({{ int {ok} = 1; "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if (!{lam}({obj_c}.data[{i_var}])) {{ {ok} = 0; break; }} }} "
+                f"{ok}; }})"
+            )
+
+        # ── for_each ─────────────────────────────────────────────
+        if method == 'for_each':
+            lam = _lam(0)
+            return (
+                f"({{ for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"{lam}({obj_c}.data[{i_var}]); }} (void)0; }})"
+            )
+
+        # ── first ────────────────────────────────────────────────
+        if method == 'first':
+            struct = f"MrylResult_{ct}_MrylString"
+            self.result_type_registry.add((ct, "MrylString", struct))
+            r = f"__first_{idx}"
+            return (
+                f"({{ {struct} {r}; "
+                f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
+                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {obj_c}.data[0]; }} "
+                f"{r}; }})"
+            )
+
+        # ── aggregate ────────────────────────────────────────────
+        if method == 'aggregate':
+            if len(expr.args) == 1:
+                # 初期値なし: Result<T, string>
+                lam    = _lam(0)
+                struct = f"MrylResult_{ct}_MrylString"
+                self.result_type_registry.add((ct, "MrylString", struct))
+                r   = f"__agg_{idx}"
+                acc = f"__acc_{idx}"
+                return (
+                    f"({{ {struct} {r}; "
+                    f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
+                    f"else {{ {ct} {acc} = {obj_c}.data[0]; "
+                    f"for (int32_t {i_var} = 1; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
+                    f"{r}.is_ok = 1; {r}.data.ok_val = {acc}; }} "
+                    f"{r}; }})"
+                )
+            else:
+                # 初期値あり: aggregate(init, fn) -> U
+                init_c = self._generate_expr(expr.args[0])
+                lam    = _lam(1)
+                init_t = self._infer_expr_type(expr.args[0])
+                init_ct = self._type_to_c_base(init_t) if init_t not in ("i32", "any") else ct
+                acc    = f"__acc_{idx}"
+                return (
+                    f"({{ {init_ct} {acc} = {init_c}; "
+                    f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
+                    f"{acc}; }})"
+                )
+
+        # ── select_many (C gen defer) ─────────────────────────────
+        if method == 'select_many':
+            raise NotImplementedError(
+                "select_many C code generation is deferred to v0.5.0. "
+                "Use Python interpreter mode for now."
+            )
+
+        raise RuntimeError(f"Unknown iter method in codegen: {method}")
 

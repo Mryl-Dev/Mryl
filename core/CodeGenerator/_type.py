@@ -1,15 +1,16 @@
 from __future__ import annotations
 from CodeGenerator._proto import _CodeGeneratorBase
+from Ast import TypeNode
 
 
 class CodeGeneratorTypeMixin(_CodeGeneratorBase):
     """型変換を担当する Mixin
-    _type_to_c / _type_to_c_base / _type_to_fmt_spec / _emit_result_typedefs
+    _type_to_c / _type_to_c_base / _type_to_fmt_spec / _emit_result_typedefs / _emit_option_typedefs
     """
 
     def _type_to_c(self, type_node) -> str:
         """Mryl TypeNode を C 型文字列に変換する。
-        副作用: Result<T,E> の初回変換時に self.result_type_registry へ登録する。
+        副作用: Result<T,E> / Option<T> の初回変換時に各 registry へ登録する。
         """
         if not type_node:
             return "void"
@@ -27,6 +28,15 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
         if type_node.name == "Future":
             return "MrylTask*"
 
+        if type_node.name == "Box":
+            # ユーザー定義 struct Box がある場合は通常の base_type として処理する
+            if not any(s.name == "Box" for s in self.structs):
+                if type_node.type_args:
+                    arg = type_node.type_args[0]
+                    inner_c = self._type_to_c(arg if hasattr(arg, 'name') else TypeNode(arg))
+                    return f"{inner_c}*"
+                return "void*"
+
         if type_node.name == "Result":
             if type_node.type_args and len(type_node.type_args) == 2:
                 ok_c  = self._type_to_c(type_node.type_args[0])
@@ -39,6 +49,18 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
                 self.result_type_registry.add((ok_c, err_c, struct_name))
                 return struct_name
             return "MrylResult_i32_i32"
+
+        if type_node.name == "Option":
+            if type_node.type_args:
+                inner_c = self._type_to_c(type_node.type_args[0])
+                struct_name = (
+                    f"MrylOption_{inner_c}"
+                    .replace("*", "Ptr")
+                    .replace(" ", "_")
+                )
+                self.option_type_registry.add((inner_c, struct_name))
+                return struct_name
+            return "MrylOption_int32_t"
 
         if type_node.name == "fn":
             return "void*"
@@ -84,5 +106,17 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
             self._emit(f"typedef struct {{")
             self._emit(f"    int is_ok;")
             self._emit(f"    union {{ {ok_c} ok_val; {err_c} err_val; }} data;")
+            self._emit(f"}} {struct_name};")
+        self._emit("")
+
+    def _emit_option_typedefs(self):
+        """option_type_registry に登録済みの Option<T> 型を typedef として出力する"""
+        if not self.option_type_registry:
+            return
+        self._emit("// ===== Option<T> type structs =====")
+        for (inner_c, struct_name) in sorted(self.option_type_registry):
+            self._emit(f"typedef struct {{")
+            self._emit(f"    {inner_c} value;")
+            self._emit(f"    int has_value;")
             self._emit(f"}} {struct_name};")
         self._emit("")

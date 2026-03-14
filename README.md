@@ -1,4 +1,4 @@
-# Mryl プログラミング言語(v0.3.0) - 言語リファレンス
+# Mryl プログラミング言語(v0.4.0) - 言語リファレンス
 
 <p align="left">
   <img src="assets/icon_banner.svg" width="700" alt="Mryl banner"/>
@@ -29,14 +29,18 @@
 17. [enum（列挙型）](#enum列挙型)
 18. [match 式](#match-式)
 19. [Result 型とエラーハンドリング](#result-型とエラーハンドリング)
-20. [配列（固定長）](#配列固定長)
-21. [可変長配列（T[]）](#可変長配列t)
-22. [組み込み関数](#組み込み関数)
-23. [string 組み込みメソッド](#string-組み込みメソッド)
-24. [型推論](#型推論)
-25. [型チェック](#型チェック)
-26. [まとめ](#まとめ)
-27. [トラブルシューティング](#トラブルシューティング)
+20. [Option 型](#option-型)
+21. [Box 型（ヒープポインタ）](#box-型ヒープポインタ)
+22. [配列（固定長）](#配列固定長)
+23. [可変長配列（T[]）](#可変長配列t)
+24. [組み込み関数](#組み込み関数)
+25. [string 組み込みメソッド](#string-組み込みメソッド)
+26. [Iter\<T\> / LINQ スタイルコレクション操作](#itert--linq-スタイルコレクション操作)
+27. [型推論](#型推論)
+28. [型チェック](#型チェック)
+29. [まとめ](#まとめ)
+30. [テストファイル](#テストファイル)
+31. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
@@ -233,6 +237,8 @@ Mryl は以下の機能を備えています：
 - **enum**：データを持てる列挙型（Rust 風）
 - **match 式**：パターンマッチングによる分岐
 - **Result\<T,E\>**：型安全なエラーハンドリング（`Ok` / `Err` + `.try()`）
+- **Option\<T\>**：値なし（`None`）/ 値あり（`Some(v)`）の安全な型、match によるパターンマッチ
+- **Box\<T\>**：ヒープポインタ型、`*b` デリファレンス、`.unbox()`、多重ポインタ（`Box<Box<T>>` 等）対応
 - **配列**：固定長配列と可変長配列（`T[]`）に対応
 - **制御構文**：if/else, while, for（Rust 風・包含 `to`・C 風）、`break` / `continue`
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
@@ -242,7 +248,8 @@ Mryl は以下の機能を備えています：
 - **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
-- **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace`）
+- **string 操作**：連結（`+`）、比較（`==` / `!=`）、組み込みメソッド（`len` / `contains` / `starts_with` / `ends_with` / `trim` / `to_upper` / `to_lower` / `replace` / `find` / `split`）
+- **Iter\<T\> / LINQ コレクション操作**：`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`（C# LINQ 準拠）
 - **ユーザー入力**：`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`（ゼロ除算安全除算）
 - **構造化エラー出力**：タイムスタンプ付きスタックトレース + 行番号
 
@@ -1247,7 +1254,17 @@ println("{}", name);   // two
 
 ### 部分マッチ（_ ワイルドカード）
 
-全バリアントを網羅しない場合も `_` で残りをまとめられます（将来拡張予定）。
+全バリアントを網羅しない場合も `_` でキャッチオールアームを記述できます。
+
+```mryl
+let x: i32 = 42;
+let result: string = match x {
+    1 => "one",
+    2 => "two",
+    _ => "other",
+};
+println("{}", result);   // other
+```
 
 ---
 
@@ -1310,6 +1327,88 @@ panic 時の出力例：
 - **タイムスタンプ付き**：`[YYYY-MM-DD HH:MM:SS]` 形式
 - **スタックトレース**：呼び出し元の関数名 + 行番号を表示
 - **構造化エラー種別**：型エラー、パース失敗、実行時エラーを区別
+
+---
+
+## Option 型
+
+`Option<T>` は「値がある (`Some`)」か「値がない (`None`)」かを安全に扱う型です。  
+null / undefined の代替として使用し、`match` でパターンマッチングにより値を取り出します。
+
+### Option の生成
+
+```mryl
+let a: Option<i32> = Some(42);   // 値あり
+let b: Option<i32> = None;       // 値なし
+```
+
+### match によるパターンマッチング
+
+```mryl
+fn describe(opt: Option<i32>) -> i32 {
+    return match opt {
+        Some(v) => v,
+        None    => -1,
+    };
+}
+
+fn main() -> i32 {
+    println("{}", describe(Some(10)));  // 10
+    println("{}", describe(None));      // -1
+    return 0;
+}
+```
+
+### 関数の戻り値として
+
+```mryl
+fn safe_head(arr: i32[], n: i32) -> Option<i32> {
+    if (n == 0) { return None; }
+    return Some(arr[0]);
+}
+```
+
+---
+
+## Box 型（ヒープポインタ）
+
+`Box<T>` は値をヒープに確保し、ポインタとして保持します。  
+再帰的データ構造や動的割り当てが必要な場面で使用します。  
+ネイティブコンパイル時は `T*`（`malloc` によるヒープ確保）に変換されます。
+
+### Box の生成
+
+```mryl
+let b: Box<i32> = Box::new(42);
+```
+
+### デリファレンス（`*` 演算子）
+
+```mryl
+let val: i32 = *b;          // 42
+println("{}", *b);
+```
+
+### .unbox() メソッド
+
+```mryl
+let val: i32 = b.unbox();   // *b と等価
+```
+
+### 多重ポインタ（`Box<Box<T>>`）
+
+ネストした Box は `>>` が `RSHIFT` と衝突するため、内側から順に型引数を解釈します。
+
+```mryl
+let bb: Box<Box<i32>> = Box::new(Box::new(99));
+let inner: Box<i32>   = *bb;
+println("{}", *inner);           // 99
+println("{}", (*bb).unbox());    // 99
+
+// 3重・4重も同様
+let bbb: Box<Box<Box<i32>>>      = Box::new(Box::new(Box::new(7)));
+let bbbb: Box<Box<Box<Box<i32>>>> = Box::new(Box::new(Box::new(Box::new(3))));
+```
 
 ---
 
@@ -1617,6 +1716,18 @@ println("lo={}", "WORLD".to_lower());              // world
 
 // 置換（string）
 println("rep={}", "foo bar foo".replace("foo", "baz")); // baz bar baz
+
+// 部分文字列の位置（Option<i32>）
+let pos = "hello world".find("world");
+match pos {
+    Some(i) => println("found at {}", i),  // found at 6
+    None    => println("not found"),
+};
+
+// 区切り文字で分割（string[]）
+let parts = "apple,banana,cherry".split(",");
+println("{}", parts.len());   // 3
+println("{}", parts[0]);      // apple
 ```
 
 | メソッド | 引数 | 戻り値 | 説明 |
@@ -1629,6 +1740,71 @@ println("rep={}", "foo bar foo".replace("foo", "baz")); // baz bar baz
 | `to_upper()` | — | `string` | 大文字変換 |
 | `to_lower()` | — | `string` | 小文字変換 |
 | `replace(from, to)` | `string, string` | `string` | 全出現箇所を置換 |
+| `find(pat)` | `string` | `Option<i32>` | 最初の出現位置を返す（なければ `None`） |
+| `split(sep)` | `string` | `string[]` | 区切り文字で分割した配列を返す |
+
+---
+
+## Iter\<T\> / LINQ スタイルコレクション操作
+
+配列（`T[]`）に対して C# LINQ 準拠のメソッドチェーンでコレクション操作を記述できます。
+`.iter()` 不要で、配列から直接チェーンを開始できます。
+
+```mryl
+let nums: i32[] = [1, 2, 3, 4, 5];
+
+// filter → select → to_array チェーン
+let result = nums
+    .filter((x: i32) => x % 2 == 0)
+    .select((x: i32) => x * 10)
+    .to_array();
+
+println("{}", result.len());   // 2
+println("{}", result[0]);      // 20
+println("{}", result[1]);      // 40
+
+// aggregate（初期値なし）
+let sum_r = nums.aggregate((a: i32, b: i32) => a + b);
+match sum_r {
+    Ok(s)  => println("sum={}", s),   // sum=15
+    Err(e) => println("err={}", e),
+};
+
+// count / first / any / all
+println("{}", nums.count());                         // 5
+println("{}", nums.any((x: i32) => x > 4));          // true
+println("{}", nums.all((x: i32) => x > 0));          // true
+
+// for_each（副作用のみ、let に代入不可）
+nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
+```
+
+### API 一覧
+
+#### 中間操作（チェーン可能・`Iter<T>` を返す）
+
+| メソッド | 戻り値 | C# 対応 | 説明 |
+|---|---|---|---|
+| `select(fn(T)->U)` | `Iter<U>` | `Select` | 各要素を変換 |
+| `filter(fn(T)->bool)` | `Iter<T>` | `Where` | 条件を満たす要素だけ残す |
+| `take(n: i32)` | `Iter<T>` | `Take` | 先頭 n 件 |
+| `skip(n: i32)` | `Iter<T>` | `Skip` | 先頭 n 件をスキップ |
+| `select_many(fn(T)->U[])` | `Iter<U>` | `SelectMany` | map + flatten |
+
+#### 終端操作（評価・消費）
+
+| メソッド | 戻り値 | C# 対応 | 説明 |
+|---|---|---|---|
+| `to_array()` | `T[]` | `ToArray` | 配列に変換 |
+| `aggregate(fn(T,T)->T)` | `Result<T, string>` | `Aggregate` | 初期値なし畳み込み |
+| `aggregate(init, fn(U,T)->U)` | `U` | `Aggregate` | 初期値あり畳み込み |
+| `for_each(fn(T)->void)` | `void` | `ForEach` | 副作用のみ（`let` 代入不可） |
+| `count()` | `i32` | `Count` | 要素数 |
+| `first()` | `Result<T, string>` | `First` | 先頭要素（空なら `Err`） |
+| `any(fn(T)->bool)` | `bool` | `Any` | 条件を満たす要素が存在するか |
+| `all(fn(T)->bool)` | `bool` | `All` | 全要素が条件を満たすか |
+
+> **Note**: `select_many` は Python インタプリタモードのみ対応。C ネイティブ実行は v0.5.0 で対応予定。
 
 ---
 
@@ -1656,10 +1832,13 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fn 型パラメータ**（高階関数・コールバック）  
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
-✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 8 種）  
-✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
-✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
-✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
+✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）
+✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）
+✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）
+✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）
+✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）
+✓ Python インタプリタ + C コードジェネレータの二重実行エンジン
 
 学習用言語としても、趣味の言語としても十分な完成度を持っています。
 
@@ -1694,6 +1873,12 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_23_static.ml](../tests/test_23_static.ml) | `static fn` / `::` 呼び出し / fn 型参照 | ✅ Python + C + Native |
 | [tests/test_24_zero_div.ml](../tests/test_24_zero_div.ml) | ゼロ除算安全（`checked_div` / 境界値分析） | ✅ Python + C + Native |
 | [tests/test_25_parse_result.ml](../tests/test_25_parse_result.ml) | `parse_int` / `parse_f64` の Result 返し | ✅ Python + C + Native |
+| [tests/test_26_option.ml](../tests/test_26_option.ml) | `Option<T>`（`Some` / `None` / match パターン） | ✅ Python + C + Native |
+| [tests/test_27_match_wildcard.ml](../tests/test_27_match_wildcard.ml) | match ワイルドカードパターン（`_` 全面対応） | ✅ Python + C + Native |
+| [tests/test_28_box.ml](../tests/test_28_box.ml) | `Box<T>`（生成・`*` deref・`.unbox()`・多重ポインタ）| ✅ Python + C + Native |
+| [tests/test_29_string_find.ml](../tests/test_29_string_find.ml) | `string.find()`（`Option<i32>` 返し・各種パターン） | ✅ Python + C + Native |
+| [tests/test_30_string_split.ml](../tests/test_30_string_split.ml) | `string.split()`（区切り文字・境界値・空文字） | ✅ Python + C + Native |
+| [tests/test_31_iter_linq.ml](../tests/test_31_iter_linq.ml) | `Iter<T>` / LINQ 全 12 メソッド（C0/C1/MC/DC） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

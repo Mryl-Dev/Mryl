@@ -202,6 +202,12 @@ class Interpreter:
                 return {'__result_tag__': 'ok', 'value': args[0] if args else None}
             if name == "Err":
                 return {'__result_tag__': 'err', 'value': args[0] if args else None}
+            if name == "Some":
+                return {'__option_tag__': 'some', 'value': args[0] if args else None}
+            if name == "Box":
+                # Box::new(v) は EnumVariantExpr で処理されるが、
+                # FunctionCall("Box", [v]) として来る場合も対応
+                return {'__box__': True, 'value': args[0] if args else None}
             raise RuntimeError(f"Undefined function: {name}")
 
         entry = self.functions[name]
@@ -756,6 +762,8 @@ class Interpreter:
         return expr.value
 
     def _eval_varref(self, expr: VarRef, env):
+        if expr.name == "None":
+            return {'__option_tag__': 'none'}
         return self.get_var(env, expr.name)
 
     def _eval_binary_op(self, expr: BinaryOp, env):
@@ -831,6 +839,12 @@ class Interpreter:
         raise RuntimeError("await: expression is not a Future")
 
     def _eval_enum_variant_expr(self, expr: EnumVariantExpr, env):
+        # Box::new(v) — ヒープアロケーション相当（ユーザー定義 struct Box がない場合のみ）
+        if expr.enum_name == "Box" and expr.variant_name == "new" \
+                and "Box" not in self.structs:
+            val = self.eval_expr(expr.args[0], env) if expr.args else None
+            return {'__box__': True, 'value': val}
+
         struct = self.structs.get(expr.enum_name)
         if struct:
             method = next(
@@ -932,6 +946,10 @@ class Interpreter:
         if expr.op == "-":  return -v
         if expr.op == "!":  return not self.is_truthy(v)
         if expr.op == "~":  return ~int(v)
+        if expr.op == "deref":
+            if isinstance(v, dict) and v.get('__box__'):
+                return v['value']
+            raise RuntimeError(f"Deref (*) requires a Box value, got: {v!r}")
         raise RuntimeError(f"Unknown unary operator: {expr.op}")
 
     def _match_pattern(self, pattern, val):
@@ -941,11 +959,7 @@ class Interpreter:
             return {}, (val == pattern.value)
         if isinstance(pattern, BindingPattern):
             if pattern.name == "_":
-                raise MrylRuntimeError(
-                    f"'_' error arm reached with value: {val!r}",
-                    error_type="MatchError",
-                    call_stack=self.call_stack,
-                )
+                return {}, True
             return {pattern.name: val}, True
         if isinstance(pattern, EnumPattern):
             # Result型 Ok(v) / Err(e) パターン
@@ -957,6 +971,18 @@ class Interpreter:
                 if pattern.bindings:
                     bindings[pattern.bindings[0]] = val.get('value')
                 return bindings, True
+            # Option型 Some(v) / None パターン
+            if pattern.enum_name == 'Some' and pattern.variant_name == 'Some':
+                if not (isinstance(val, dict) and val.get('__option_tag__') == 'some'):
+                    return {}, False
+                bindings = {}
+                if pattern.bindings:
+                    bindings[pattern.bindings[0]] = val.get('value')
+                return bindings, True
+            if pattern.enum_name == 'None' and pattern.variant_name == 'None':
+                if not (isinstance(val, dict) and val.get('__option_tag__') == 'none'):
+                    return {}, False
+                return {}, True
             # 通常の enum パターン
             if not (isinstance(val, dict)
                     and val.get('__enum__') == pattern.enum_name
@@ -1138,6 +1164,11 @@ class Interpreter:
         if isinstance(obj, dict) and '__result_tag__' in obj:
             return self._eval_result_method(obj, expr.method, args_eval)
 
+        if isinstance(obj, dict) and '__box__' in obj:
+            if expr.method == 'unbox':
+                return obj['value']
+            raise RuntimeError(f"Unknown Box method: {expr.method}")
+
         if isinstance(obj, dict) and '__struct_name__' in obj:
             return self._eval_struct_method(obj, expr.method, args_eval)
 
@@ -1164,6 +1195,60 @@ class Interpreter:
         if method == 'insert':
             obj.insert(int(args_eval[0]), args_eval[1])
             return None
+
+        # ── Iter<T> / LINQ スタイル操作 ──────────────────────────
+        def _call(fn_val, *a):
+            if isinstance(fn_val, dict) and 'params' in fn_val:
+                return self.call_lambda(fn_val, list(a))
+            if callable(fn_val):
+                return fn_val(*a)
+            raise RuntimeError(f"Not callable: {fn_val!r}")
+
+        if method == 'select':
+            return [_call(args_eval[0], x) for x in obj]
+        if method == 'filter':
+            return [x for x in obj if _call(args_eval[0], x)]
+        if method == 'take':
+            n = int(args_eval[0])
+            return obj[:n]
+        if method == 'skip':
+            n = int(args_eval[0])
+            return obj[n:]
+        if method == 'select_many':
+            return [y for x in obj for y in _call(args_eval[0], x)]
+        if method == 'to_array':
+            return list(obj)
+        if method == 'for_each':
+            for x in obj:
+                _call(args_eval[0], x)
+            return None
+        if method == 'count':
+            return len(obj)
+        if method == 'first':
+            if not obj:
+                return {'__result_tag__': 'err', 'value': 'empty sequence'}
+            return {'__result_tag__': 'ok', 'value': obj[0]}
+        if method == 'any':
+            return any(_call(args_eval[0], x) for x in obj)
+        if method == 'all':
+            return all(_call(args_eval[0], x) for x in obj)
+        if method == 'aggregate':
+            import functools
+            if len(args_eval) == 1:
+                # 初期値なし: fn(T, T) -> T
+                if not obj:
+                    return {'__result_tag__': 'err', 'value': 'empty sequence'}
+                try:
+                    result = functools.reduce(lambda a, b: _call(args_eval[0], a, b), obj)
+                    return {'__result_tag__': 'ok', 'value': result}
+                except Exception as e:
+                    return {'__result_tag__': 'err', 'value': str(e)}
+            else:
+                # 初期値あり: aggregate(init, fn(U, T) -> U)
+                init = args_eval[0]
+                fn   = args_eval[1]
+                return functools.reduce(lambda a, b: _call(fn, a, b), obj, init)
+
         raise RuntimeError(f"Unknown array method: {method}")
 
     def _eval_string_method(self, obj: str, method: str, args_eval: list):
@@ -1184,6 +1269,16 @@ class Interpreter:
             return obj.lower()
         if method == 'replace':
             return obj.replace(args_eval[0], args_eval[1])
+        if method == 'find':
+            idx = obj.find(args_eval[0])
+            if idx == -1:
+                return {'__option_tag__': 'none'}
+            return {'__option_tag__': 'some', 'value': idx}
+        if method == 'split':
+            delim = args_eval[0]
+            if delim == '':
+                return list(obj)
+            return obj.split(delim)
         raise RuntimeError(f"Unknown string method: {method}")
 
     def _eval_result_method(self, obj: dict, method: str, args_eval: list):
