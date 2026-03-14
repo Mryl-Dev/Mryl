@@ -127,8 +127,13 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
             ret_type = self._type_to_c(inferred) if inferred and inferred.name != 'void' else "void"
         else:
             body_expr = self._generate_expr(expr.body)
-            self._emit(f"return {body_expr};")
-            ret_type  = "int32_t"
+            body_t    = self._infer_expr_type(expr.body)
+            if body_t == "void":
+                self._emit(f"{body_expr};")
+                ret_type = "void"
+            else:
+                self._emit(f"return {body_expr};")
+                ret_type = "int32_t"
 
         body_lines             = self.code
         self.code              = saved_code

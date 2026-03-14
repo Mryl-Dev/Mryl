@@ -578,6 +578,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 val = self._generate_expr(expr.args[1])
                 return f"mryl_vec_{et}_insert(&{obj_name}, {idx}, {val})"
 
+            # ── Iter<T> / LINQ 系メソッド ──────────────────────────
+            elif expr.method in ('select', 'filter', 'take', 'skip',
+                                 'select_many', 'to_array',
+                                 'aggregate', 'for_each',
+                                 'count', 'first', 'any', 'all'):
+                return self._generate_iter_method(expr, et, obj_name)
+
         # Result<T,E> のメソッド
         obj_type = self._infer_expr_type(expr.obj)
         if obj_type == "Result" or obj_type.startswith("Result_"):
@@ -651,4 +658,173 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         struct_name = obj_type   # Bug#27: obj の型から struct 名を解決
         all_args    = [f"&{obj}"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
+
+    def _generate_iter_method(self, expr, et: str, obj_c: str) -> str:
+        """Iter<T> / LINQ メソッドの C statement expression を生成する。
+
+        Args:
+            expr   : MethodCall ノード
+            et     : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
+            obj_c  : レシーバの C 式文字列
+        """
+        from Ast import Lambda
+
+        method = expr.method
+        idx    = self.loop_counter
+        self.loop_counter += 1
+        ct     = self._type_to_c_base(et)    # Mryl 型 → C 型 (e.g. "int32_t")
+        i_var  = f"__i_{idx}"
+
+        def _lam(arg_idx: int) -> str:
+            """引数 arg_idx のラムダ / 関数参照を C 関数名として返す。"""
+            arg = expr.args[arg_idx]
+            if isinstance(arg, Lambda):
+                return self._generate_lambda(arg)
+            return self._generate_expr(arg)
+
+        # ── select ──────────────────────────────────────────────
+        if method == 'select':
+            lam = _lam(0)
+            # 出力型推論: Lambda の inferred_return_type か fallback で et
+            lam_arg = expr.args[0]
+            if isinstance(lam_arg, Lambda):
+                inferred = getattr(lam_arg, 'inferred_return_type', None)
+                out_et = inferred.name if inferred else et
+            else:
+                out_et = et
+            out_ct = self._type_to_c_base(out_et)
+            r = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{out_et} {r} = mryl_vec_{out_et}_new(); "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"mryl_vec_{out_et}_push(&{r}, {lam}({obj_c}.data[{i_var}])); }} "
+                f"{r}; }})"
+            )
+
+        # ── filter ──────────────────────────────────────────────
+        if method == 'filter':
+            lam = _lam(0)
+            r = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{et} {r} = mryl_vec_{et}_new(); "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if ({lam}({obj_c}.data[{i_var}])) {{ "
+                f"mryl_vec_{et}_push(&{r}, {obj_c}.data[{i_var}]); }} }} "
+                f"{r}; }})"
+            )
+
+        # ── take ─────────────────────────────────────────────────
+        if method == 'take':
+            n   = self._generate_expr(expr.args[0])
+            r   = f"__iter_{idx}"
+            return (
+                f"({{ MrylVec_{et} {r} = {obj_c}; "
+                f"if ({n} < {r}.len) {r}.len = {n}; "
+                f"{r}; }})"
+            )
+
+        # ── skip ─────────────────────────────────────────────────
+        if method == 'skip':
+            n   = self._generate_expr(expr.args[0])
+            s   = f"__s_{idx}"
+            r   = f"__iter_{idx}"
+            return (
+                f"({{ int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len); "
+                f"MrylVec_{et} {r}; "
+                f"{r}.data = {obj_c}.data + {s}; "
+                f"{r}.len  = {obj_c}.len - {s}; "
+                f"{r}.cap  = {obj_c}.cap - {s}; "
+                f"{r}; }})"
+            )
+
+        # ── to_array ─────────────────────────────────────────────
+        if method == 'to_array':
+            return obj_c
+
+        # ── count ────────────────────────────────────────────────
+        if method == 'count':
+            return f"{obj_c}.len"
+
+        # ── any ──────────────────────────────────────────────────
+        if method == 'any':
+            lam = _lam(0)
+            found = f"__found_{idx}"
+            return (
+                f"({{ int {found} = 0; "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if ({lam}({obj_c}.data[{i_var}])) {{ {found} = 1; break; }} }} "
+                f"{found}; }})"
+            )
+
+        # ── all ──────────────────────────────────────────────────
+        if method == 'all':
+            lam = _lam(0)
+            ok  = f"__ok_{idx}"
+            return (
+                f"({{ int {ok} = 1; "
+                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"if (!{lam}({obj_c}.data[{i_var}])) {{ {ok} = 0; break; }} }} "
+                f"{ok}; }})"
+            )
+
+        # ── for_each ─────────────────────────────────────────────
+        if method == 'for_each':
+            lam = _lam(0)
+            return (
+                f"({{ for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                f"{lam}({obj_c}.data[{i_var}]); }} (void)0; }})"
+            )
+
+        # ── first ────────────────────────────────────────────────
+        if method == 'first':
+            struct = f"MrylResult_{ct}_MrylString"
+            self.result_type_registry.add((ct, "MrylString", struct))
+            r = f"__first_{idx}"
+            return (
+                f"({{ {struct} {r}; "
+                f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
+                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {obj_c}.data[0]; }} "
+                f"{r}; }})"
+            )
+
+        # ── aggregate ────────────────────────────────────────────
+        if method == 'aggregate':
+            if len(expr.args) == 1:
+                # 初期値なし: Result<T, string>
+                lam    = _lam(0)
+                struct = f"MrylResult_{ct}_MrylString"
+                self.result_type_registry.add((ct, "MrylString", struct))
+                r   = f"__agg_{idx}"
+                acc = f"__acc_{idx}"
+                return (
+                    f"({{ {struct} {r}; "
+                    f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
+                    f"else {{ {ct} {acc} = {obj_c}.data[0]; "
+                    f"for (int32_t {i_var} = 1; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
+                    f"{r}.is_ok = 1; {r}.data.ok_val = {acc}; }} "
+                    f"{r}; }})"
+                )
+            else:
+                # 初期値あり: aggregate(init, fn) -> U
+                init_c = self._generate_expr(expr.args[0])
+                lam    = _lam(1)
+                init_t = self._infer_expr_type(expr.args[0])
+                init_ct = self._type_to_c_base(init_t) if init_t not in ("i32", "any") else ct
+                acc    = f"__acc_{idx}"
+                return (
+                    f"({{ {init_ct} {acc} = {init_c}; "
+                    f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
+                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
+                    f"{acc}; }})"
+                )
+
+        # ── select_many (C gen defer) ─────────────────────────────
+        if method == 'select_many':
+            raise NotImplementedError(
+                "select_many C code generation is deferred to v0.5.0. "
+                "Use Python interpreter mode for now."
+            )
+
+        raise RuntimeError(f"Unknown iter method in codegen: {method}")
 

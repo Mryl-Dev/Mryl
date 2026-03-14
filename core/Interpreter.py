@@ -1195,6 +1195,60 @@ class Interpreter:
         if method == 'insert':
             obj.insert(int(args_eval[0]), args_eval[1])
             return None
+
+        # ── Iter<T> / LINQ スタイル操作 ──────────────────────────
+        def _call(fn_val, *a):
+            if isinstance(fn_val, dict) and 'params' in fn_val:
+                return self.call_lambda(fn_val, list(a))
+            if callable(fn_val):
+                return fn_val(*a)
+            raise RuntimeError(f"Not callable: {fn_val!r}")
+
+        if method == 'select':
+            return [_call(args_eval[0], x) for x in obj]
+        if method == 'filter':
+            return [x for x in obj if _call(args_eval[0], x)]
+        if method == 'take':
+            n = int(args_eval[0])
+            return obj[:n]
+        if method == 'skip':
+            n = int(args_eval[0])
+            return obj[n:]
+        if method == 'select_many':
+            return [y for x in obj for y in _call(args_eval[0], x)]
+        if method == 'to_array':
+            return list(obj)
+        if method == 'for_each':
+            for x in obj:
+                _call(args_eval[0], x)
+            return None
+        if method == 'count':
+            return len(obj)
+        if method == 'first':
+            if not obj:
+                return {'__result_tag__': 'err', 'value': 'empty sequence'}
+            return {'__result_tag__': 'ok', 'value': obj[0]}
+        if method == 'any':
+            return any(_call(args_eval[0], x) for x in obj)
+        if method == 'all':
+            return all(_call(args_eval[0], x) for x in obj)
+        if method == 'aggregate':
+            import functools
+            if len(args_eval) == 1:
+                # 初期値なし: fn(T, T) -> T
+                if not obj:
+                    return {'__result_tag__': 'err', 'value': 'empty sequence'}
+                try:
+                    result = functools.reduce(lambda a, b: _call(args_eval[0], a, b), obj)
+                    return {'__result_tag__': 'ok', 'value': result}
+                except Exception as e:
+                    return {'__result_tag__': 'err', 'value': str(e)}
+            else:
+                # 初期値あり: aggregate(init, fn(U, T) -> U)
+                init = args_eval[0]
+                fn   = args_eval[1]
+                return functools.reduce(lambda a, b: _call(fn, a, b), obj, init)
+
         raise RuntimeError(f"Unknown array method: {method}")
 
     def _eval_string_method(self, obj: str, method: str, args_eval: list):

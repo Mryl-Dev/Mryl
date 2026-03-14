@@ -197,6 +197,21 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                     return "bool"
                 if expr.method in ('trim', 'to_upper', 'to_lower', 'replace'):
                     return "string"
+            # 動的配列 / Iter<T> の LINQ 系メソッド
+            if obj_t.startswith("vec_") or obj_t.startswith("MrylVec_"):
+                prefix = "vec_" if obj_t.startswith("vec_") else "MrylVec_"
+                elem_c = obj_t[len(prefix):]
+                m = expr.method
+                if m in ('select', 'filter', 'take', 'skip', 'select_many', 'to_array'):
+                    return f"vec_{elem_c}"   # Iter<T> / T[] は vec_T で表す
+                if m == 'count':
+                    return "i32"
+                if m in ('any', 'all'):
+                    return "bool"
+                if m in ('first', 'aggregate'):
+                    return f"Result_{elem_c}_string"
+                if m == 'for_each':
+                    return "void"
             # struct メソッドの戻り値型を検索 (#29/#30 正確な型推論)
             for struct in self.structs:
                 if struct.name == obj_t:
