@@ -65,6 +65,11 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
         if type_node.name == "fn":
             return "void*"
 
+        # 動的配列 (array_size == -1) → MrylVec_<T> として扱う
+        # 静的配列 (array_size > 0) → C の配列型 base_type[N] として扱う
+        if type_node.array_size == -1:
+            return f"MrylVec_{type_name}"
+
         if type_node.array_size:
             return f"{base_type}[{type_node.array_size}]"
 

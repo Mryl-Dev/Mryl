@@ -312,7 +312,7 @@ Mryl/
 
 すべてのメソッドは `_header.py` が生成するインライン C ヘルパー関数へ展開されます。
 
-### 3.14 Iter\<T\>（LINQ スタイルコレクション操作）（v0.4.0 #43）
+### 3.14 Iter\<T\>（LINQ スタイルコレクション操作）（v0.4.0 #43 / v0.5.0 #65 #62）
 
 配列（`T[]`）に対して C# LINQ 準拠のメソッドチェーンでコレクション操作を記述できる型。
 内部的には `TypeNode("Iter", type_args=[T])` として表現し、`array_size=-1` で既存の動的配列ブランチと統一。
@@ -325,7 +325,7 @@ Mryl/
 | `filter(fn)` | `fn(T) -> bool` | `Iter<T>` | `Where` |
 | `take(n)` | `i32` | `Iter<T>` | `Take` |
 | `skip(n)` | `i32` | `Iter<T>` | `Skip` |
-| `select_many(fn)` | `fn(T) -> U[]` | `Iter<U>` | `SelectMany`（Interpreter のみ）|
+| `select_many(fn)` | `fn(T) -> U[]` | `Iter<U>` | `SelectMany`（v0.5.0 #65） |
 
 #### 終端操作
 
@@ -349,13 +349,14 @@ Mryl/
 | CodeGenerator（式） | GCC statement expression `({ ... })` でインライン生成（`_expr.py`） |
 | CodeGenerator（型推論） | `vec_` prefix で iter メソッド戻り値型を推論（`_generic.py`） |
 
-#### 既知の制限（v0.5.0 繰り越し）
+#### 既知の制限
 
-| 制限 | issue |
-|---|---|
-| `select_many` C コード生成未実装（`NotImplementedError`） | `issue_iter_select_many_codegen.md` |
-| 中間 `MrylVec` のメモリリーク | `issue_iter_intermediate_memleak.md` |
-| ラムダ引数型検査が浅い | `issue_iter_lambda_typecheck_shallow.md` |
+| 制限 | issue | 状態 |
+|---|---|---|
+| `select_many` C コード生成未実装（`NotImplementedError`） | `issue_iter_select_many_codegen.md` | ✅ v0.5.0 #65 解決 |
+| 中間 `MrylVec` のメモリリーク | `issue_iter_intermediate_memleak.md` | ✅ v0.5.0 #62 解決 |
+| ラムダ引数型検査が浅い | `issue_iter_lambda_typecheck_shallow.md` | ⚠️ #63 未対応 |
+| `select_many` VarRef ラムダ時の所有権 | — | ⚠️ 将来の所有権機能で対応予定 |
 
 ---
 

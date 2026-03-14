@@ -120,11 +120,28 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
         if captures:
             self.capture_map = {n: f"__env->{n}" for n in captures}
 
+        # ラムダパラメータを env に一時追加し、body 内の型推論を正確にする
+        # (例: (xs: i32[]) => xs で xs の型 vec_i32 が _infer_expr_type から取れるようにする)
+        lam_env = {}
+        for p in expr.params:
+            if p.type_node:
+                if p.type_node.array_size == -1:
+                    lam_env[p.name] = f"vec_{p.type_node.name}"
+                else:
+                    lam_env[p.name] = p.type_node.name
+        self.env.append(lam_env)
+
         if isinstance(expr.body, Block):
             for stmt in expr.body.statements:
                 self._generate_statement(stmt)
             inferred = getattr(expr, 'inferred_return_type', None)
-            ret_type = self._type_to_c(inferred) if inferred and inferred.name != 'void' else "void"
+            if inferred is None or inferred.name == 'void':
+                ret_type = "void"
+            elif getattr(inferred, 'array_size', None) == -1:
+                # 動的配列を返す block lambda → MrylVec_<T> を返り値型にする
+                ret_type = f"MrylVec_{inferred.name}"
+            else:
+                ret_type = self._type_to_c(inferred)
         else:
             body_expr = self._generate_expr(expr.body)
             body_t    = self._infer_expr_type(expr.body)
@@ -133,7 +150,19 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
                 ret_type = "void"
             else:
                 self._emit(f"return {body_expr};")
-                ret_type = "int32_t"
+                inferred = getattr(expr, 'inferred_return_type', None)
+                body_cls = expr.body.__class__.__name__
+                if body_cls == 'ArrayLiteral' and expr.body.elements:
+                    # ArrayLiteral を返す式ラムダ: 要素型から MrylVec_<T> を決定
+                    elem_t   = self._infer_expr_type(expr.body.elements[0])
+                    ret_type = f"MrylVec_{elem_t}"
+                elif inferred is not None and getattr(inferred, 'array_size', None) == -1:
+                    # 動的配列を返す式ラムダ (例: (xs: i32[]) => xs)
+                    ret_type = f"MrylVec_{inferred.name}"
+                else:
+                    ret_type = "int32_t"
+
+        self.env.pop()
 
         body_lines             = self.code
         self.code              = saved_code

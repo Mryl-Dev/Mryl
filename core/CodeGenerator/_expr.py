@@ -113,6 +113,18 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         if expr_class == "Lambda":
             return self._generate_lambda(expr)
 
+        if expr_class == "ArrayLiteral":
+            # 動的配列リテラルを式として生成する。
+            # LetDecl 以外（ラムダの return 式など）で配列リテラルが使われた場合に対応。
+            # mryl_vec_{et}_from((ct[]){elems...}, n) として新規 MrylVec を返す。
+            if not expr.elements:
+                return "/* empty array literal */"
+            elem_t  = self._infer_expr_type(expr.elements[0])
+            ct      = self._type_to_c_base(elem_t)
+            elems_c = ", ".join(f"({ct}){self._generate_expr(e)}" for e in expr.elements)
+            n       = len(expr.elements)
+            return f"mryl_vec_{elem_t}_from(({ct}[]){{{elems_c}}}, {n})"
+
         if expr_class == "AwaitExpr":
             return "/* await - use let statement for typed await */"
 
@@ -919,11 +931,57 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                     f"{CLOSE}"
                 )
 
-        # ── select_many (C gen defer) ─────────────────────────────
+        # ── select_many ──────────────────────────────────────────────
+        # Lambda: fn(T) -> U[]  →  output: Iter<U>
+        # 外側ループ: 各 T 要素にラムダを適用 → MrylVec_U __inner を取得
+        # 内側ループ: __inner の各要素を __result に push
+        # __inner.data の free: ラムダが新規確保した場合のみ行う。
+        #   VarRef を返す場合はポインタ共有のため free 不可（UB 防止）。
         if method == 'select_many':
-            raise NotImplementedError(
-                "select_many C code generation is deferred to v0.5.0. "
-                "Use Python interpreter mode for now."
+            lam = _lam(0)
+
+            # out_et: 展開後の要素型 (U)。Lambda の inferred_return_type.name から取得。
+            lam_arg = expr.args[0] if expr.args else None
+            if isinstance(lam_arg, Lambda):
+                inferred = getattr(lam_arg, 'inferred_return_type', None)
+                if inferred is not None:
+                    out_et = inferred.name
+                else:
+                    # フォールバック: et が vec_U なら U を取り出す
+                    out_et = et[4:] if et.startswith("vec_") else et
+            else:
+                out_et = et[4:] if et.startswith("vec_") else et
+
+            inner  = f"__inner_{idx}"
+            result = f"__result_{idx}"
+            j_var  = f"__j_{idx}"
+            # NL2: 外側 for ループ本体のインデント（statement expression 内より1段深い）
+            NL2 = NL + "    "
+
+            # ラムダの body 種別から __inner.data を free すべきか判定する。
+            # - VarRef: 既存配列の参照を返す → ポインタ共有 → free 不可（UB）
+            # - ArrayLiteral / FunctionCall / MethodCall: 新規確保 → free 可
+            # - 関数参照渡し（Lambda 以外）やその他: 不明 → 安全側で free しない
+            if isinstance(lam_arg, Lambda) and lam_arg.body is not None:
+                body_cls = lam_arg.body.__class__.__name__
+                inner_needs_free = body_cls in ('ArrayLiteral', 'FunctionCall', 'MethodCall')
+            else:
+                inner_needs_free = False
+            inner_free = f"free({inner}.data);{NL2}" if inner_needs_free else ""
+
+            return (
+                f"{OPEN}"
+                f"{src_cap}"
+                f"MrylVec_{out_et} {result} = mryl_vec_{out_et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{{NL2}"
+                f"MrylVec_{out_et} {inner} = {lam}({src_ref}.data[{i_var}]);{NL2}"
+                f"for (int32_t {j_var} = 0; {j_var} < {inner}.len; {j_var}++) {{"
+                f" mryl_vec_{out_et}_push(&{result}, {inner}.data[{j_var}]); }}{NL2}"
+                f"{inner_free}"
+                f"{NL}}}{NL}"
+                f"{src_free}"
+                f"{result};"
+                f"{CLOSE}"
             )
 
         raise RuntimeError(f"Unknown iter method in codegen: {method}")

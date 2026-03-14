@@ -355,6 +355,12 @@ class TypeCheckerCallMixin:
         if method == 'select_many':
             # select_many(fn(T)->U[]) -> Iter<U>
             # U を fn の戻り値の要素型から取得（配列型の name を使う）
+            # ラムダの inferred_return_type を CodeGenerator が読めるよう check_expr を明示的に呼ぶ
+            if expr.args:
+                try:
+                    self.check_expr(expr.args[0])
+                except Exception:
+                    pass
             u = _fn_return_type(expr.args[0]) if expr.args else elem_type
             return _iter(u)
 
