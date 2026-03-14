@@ -28,6 +28,29 @@ input_file = sys.argv[1] if len(sys.argv) > 1 else "./my/string.ml"
 with open(input_file, "r", encoding="utf-8-sig") as f:
     source = f.read()
 
+# ソースファイル先頭の // STDIN: コメントから自動入力を取り出す
+# 例: // STDIN: hello\n42\n3.14
+# stdin がすでにパイプ接続されている場合は上書きしない
+if _stdin_bytes is None:
+    _auto_stdin = None
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("// STDIN:"):
+            raw = stripped[len("// STDIN:"):].strip()
+            # \n を実際の改行に変換
+            expanded = raw.replace("\\n", "\n").replace("\\t", "\t")
+            if not expanded.endswith("\n"):
+                expanded += "\n"
+            _auto_stdin = expanded
+            break
+        # コメント行以外が来たら探索終了
+        if stripped and not stripped.startswith("//"):
+            break
+    if _auto_stdin is not None:
+        _stdin_str   = _auto_stdin
+        _stdin_bytes = _auto_stdin.encode('utf-8')
+        sys.stdin    = io.StringIO(_auto_stdin)
+
 # Lexer
 lexer = Lexer(source)
 tokens = []

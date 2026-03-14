@@ -97,6 +97,10 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         if a.name == "Result" and b.name == "Result":
             return True
 
+        # Option 型: パラメータなしの Option は基底型名だけで一致
+        if a.name == "Option" and b.name == "Option":
+            return True
+
         # 配列型の比較
         if a.array_size is not None or b.array_size is not None:
             a_dyn = (a.array_size == -1)
