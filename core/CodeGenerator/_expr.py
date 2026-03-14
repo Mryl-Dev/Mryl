@@ -583,7 +583,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                                  'select_many', 'to_array',
                                  'aggregate', 'for_each',
                                  'count', 'first', 'any', 'all'):
-                return self._generate_iter_method(expr, et, obj_name)
+                # レシーバが MethodCall（中間 iter 結果）のとき src_is_temp=True とし、
+                # _generate_iter_method 内でソースを1回評価してキャプチャ・free する。
+                src_is_temp = expr.obj.__class__.__name__ == 'MethodCall'
+                return self._generate_iter_method(expr, et, obj_name, src_is_temp)
 
         # Result<T,E> のメソッド
         obj_type = self._infer_expr_type(expr.obj)
@@ -659,13 +662,17 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         all_args    = [f"&{obj}"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
 
-    def _generate_iter_method(self, expr, et: str, obj_c: str) -> str:
+    def _generate_iter_method(
+        self, expr, et: str, obj_c: str, src_is_temp: bool = False
+    ) -> str:
         """Iter<T> / LINQ メソッドの C statement expression を生成する。
 
         Args:
-            expr   : MethodCall ノード
-            et     : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
-            obj_c  : レシーバの C 式文字列
+            expr        : MethodCall ノード
+            et          : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
+            obj_c       : レシーバの C 式文字列
+            src_is_temp : True のとき obj_c は MethodCall 由来の中間 MrylVec。
+                          ソースをローカル変数にキャプチャし、使用後 free する。
         """
         from Ast import Lambda
 
@@ -674,6 +681,29 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         self.loop_counter += 1
         ct     = self._type_to_c_base(et)    # Mryl 型 → C 型 (e.g. "int32_t")
         i_var  = f"__i_{idx}"
+
+        # ── 中間ソース管理（#62 メモリリーク修正） ────────────────
+        # src_is_temp=True のとき:
+        #   obj_c を1回だけ評価してローカル変数に代入し、使用後に data を free する。
+        # src_is_temp=False のとき:
+        #   ユーザー変数を指しているため free しない。
+        src_var  = f"__src_{idx}"
+        src_ref  = src_var if src_is_temp else obj_c
+
+        # ── 生成 C コード用インデント ────────────────────────────
+        # statement expression 内の各文を読みやすいよう改行＋インデントを付ける。
+        # base_indent: 呼び出し元のインデント（statement expression の開閉括弧位置）
+        # NL         : statement expression 内の文区切り（改行＋1段深いインデント）
+        base_indent = "    " * self.indent_level
+        NL          = "\n" + "    " * (self.indent_level + 1)
+
+        # src_cap / src_free もそれぞれ1文として改行を付ける
+        src_cap  = f"MrylVec_{et} {src_var} = {obj_c};{NL}" if src_is_temp else ""
+        src_free = f"free({src_var}.data);{NL}" if src_is_temp else ""
+
+        # statement expression の開閉テンプレート
+        OPEN  = f"({{{NL}"
+        CLOSE = f"\n{base_indent}}})"
 
         def _lam(arg_idx: int) -> str:
             """引数 arg_idx のラムダ / 関数参照を C 関数名として返す。"""
@@ -695,10 +725,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             out_ct = self._type_to_c_base(out_et)
             r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{out_et} {r} = mryl_vec_{out_et}_new(); "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"mryl_vec_{out_et}_push(&{r}, {lam}({obj_c}.data[{i_var}])); }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"MrylVec_{out_et} {r} = mryl_vec_{out_et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" mryl_vec_{out_et}_push(&{r}, {lam}({src_ref}.data[{i_var}])); }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── filter ──────────────────────────────────────────────
@@ -706,43 +740,81 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             lam = _lam(0)
             r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{et} {r} = mryl_vec_{et}_new(); "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if ({lam}({obj_c}.data[{i_var}])) {{ "
-                f"mryl_vec_{et}_push(&{r}, {obj_c}.data[{i_var}]); }} }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"MrylVec_{et} {r} = mryl_vec_{et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if ({lam}({src_ref}.data[{i_var}])) {{"
+                f" mryl_vec_{et}_push(&{r}, {src_ref}.data[{i_var}]); }} }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── take ─────────────────────────────────────────────────
+        # take は .len を縮めるだけでポインタ移動なし。
+        # src_is_temp=True のとき: ソースをキャプチャし、所有権を結果に移す（free しない）。
         if method == 'take':
-            n   = self._generate_expr(expr.args[0])
-            r   = f"__iter_{idx}"
+            n = self._generate_expr(expr.args[0])
+            r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{et} {r} = {obj_c}; "
-                f"if ({n} < {r}.len) {r}.len = {n}; "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"MrylVec_{et} {r} = {src_ref};{NL}"
+                f"if ({n} < {r}.len) {r}.len = {n};{NL}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── skip ─────────────────────────────────────────────────
+        # src_is_temp=False: ユーザー変数が対象 → view 方式（従来どおり）。
+        # src_is_temp=True : 中間 MrylVec が対象 → オフセットポインタを free すると
+        #                    UB になるため、コピー方式に変更して安全に free する。
         if method == 'skip':
-            n   = self._generate_expr(expr.args[0])
-            s   = f"__s_{idx}"
-            r   = f"__iter_{idx}"
-            return (
-                f"({{ int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len); "
-                f"MrylVec_{et} {r}; "
-                f"{r}.data = {obj_c}.data + {s}; "
-                f"{r}.len  = {obj_c}.len - {s}; "
-                f"{r}.cap  = {obj_c}.cap - {s}; "
-                f"{r}; }})"
-            )
+            n = self._generate_expr(expr.args[0])
+            s = f"__s_{idx}"
+            r = f"__iter_{idx}"
+            if src_is_temp:
+                return (
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"int32_t {s} = ({n} < {src_ref}.len ? {n} : {src_ref}.len);{NL}"
+                    f"MrylVec_{et} {r} = mryl_vec_{et}_new();{NL}"
+                    f"for (int32_t {i_var} = {s}; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" mryl_vec_{et}_push(&{r}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f"{src_free}"
+                    f"{r};"
+                    f"{CLOSE}"
+                )
+            else:
+                return (
+                    f"{OPEN}"
+                    f"int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len);{NL}"
+                    f"MrylVec_{et} {r};{NL}"
+                    f"{r}.data = {obj_c}.data + {s};{NL}"
+                    f"{r}.len  = {obj_c}.len - {s};{NL}"
+                    f"{r}.cap  = {obj_c}.cap - {s};{NL}"
+                    f"{r};"
+                    f"{CLOSE}"
+                )
 
         # ── to_array ─────────────────────────────────────────────
+        # 所有権を呼び出し側に移す。free しない。
         if method == 'to_array':
             return obj_c
 
         # ── count ────────────────────────────────────────────────
         if method == 'count':
+            if src_is_temp:
+                cnt = f"__cnt_{idx}"
+                return (
+                    f"{OPEN}"
+                    f"MrylVec_{et} {src_var} = {obj_c};{NL}"
+                    f"int32_t {cnt} = {src_var}.len;{NL}"
+                    f"free({src_var}.data);{NL}"
+                    f"{cnt};"
+                    f"{CLOSE}"
+                )
             return f"{obj_c}.len"
 
         # ── any ──────────────────────────────────────────────────
@@ -750,10 +822,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             lam = _lam(0)
             found = f"__found_{idx}"
             return (
-                f"({{ int {found} = 0; "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if ({lam}({obj_c}.data[{i_var}])) {{ {found} = 1; break; }} }} "
-                f"{found}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"int {found} = 0;{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if ({lam}({src_ref}.data[{i_var}])) {{ {found} = 1; break; }} }}{NL}"
+                f"{src_free}"
+                f"{found};"
+                f"{CLOSE}"
             )
 
         # ── all ──────────────────────────────────────────────────
@@ -761,18 +837,27 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             lam = _lam(0)
             ok  = f"__ok_{idx}"
             return (
-                f"({{ int {ok} = 1; "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if (!{lam}({obj_c}.data[{i_var}])) {{ {ok} = 0; break; }} }} "
-                f"{ok}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"int {ok} = 1;{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if (!{lam}({src_ref}.data[{i_var}])) {{ {ok} = 0; break; }} }}{NL}"
+                f"{src_free}"
+                f"{ok};"
+                f"{CLOSE}"
             )
 
         # ── for_each ─────────────────────────────────────────────
         if method == 'for_each':
             lam = _lam(0)
             return (
-                f"({{ for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"{lam}({obj_c}.data[{i_var}]); }} (void)0; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" {lam}({src_ref}.data[{i_var}]); }}{NL}"
+                f"{src_free}"
+                f"(void)0;"
+                f"{CLOSE}"
             )
 
         # ── first ────────────────────────────────────────────────
@@ -781,10 +866,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             self.result_type_registry.add((ct, "MrylString", struct))
             r = f"__first_{idx}"
             return (
-                f"({{ {struct} {r}; "
-                f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
-                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {obj_c}.data[0]; }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{struct} {r};{NL}"
+                f"if ({src_ref}.len == 0) {{"
+                f" {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }}{NL}"
+                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {src_ref}.data[0]; }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── aggregate ────────────────────────────────────────────
@@ -797,26 +887,36 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 r   = f"__agg_{idx}"
                 acc = f"__acc_{idx}"
                 return (
-                    f"({{ {struct} {r}; "
-                    f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
-                    f"else {{ {ct} {acc} = {obj_c}.data[0]; "
-                    f"for (int32_t {i_var} = 1; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
-                    f"{r}.is_ok = 1; {r}.data.ok_val = {acc}; }} "
-                    f"{r}; }})"
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"{struct} {r};{NL}"
+                    f"if ({src_ref}.len == 0) {{"
+                    f" {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }}{NL}"
+                    f"else {{{NL}"
+                    f"    {ct} {acc} = {src_ref}.data[0];{NL}"
+                    f"    for (int32_t {i_var} = 1; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" {acc} = {lam}({acc}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f"    {r}.is_ok = 1; {r}.data.ok_val = {acc};{NL}}}{NL}"
+                    f"{src_free}"
+                    f"{r};"
+                    f"{CLOSE}"
                 )
             else:
                 # 初期値あり: aggregate(init, fn) -> U
-                init_c = self._generate_expr(expr.args[0])
-                lam    = _lam(1)
-                init_t = self._infer_expr_type(expr.args[0])
+                init_c  = self._generate_expr(expr.args[0])
+                lam     = _lam(1)
+                init_t  = self._infer_expr_type(expr.args[0])
                 init_ct = self._type_to_c_base(init_t) if init_t not in ("i32", "any") else ct
-                acc    = f"__acc_{idx}"
+                acc     = f"__acc_{idx}"
                 return (
-                    f"({{ {init_ct} {acc} = {init_c}; "
-                    f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
-                    f"{acc}; }})"
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"{init_ct} {acc} = {init_c};{NL}"
+                    f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" {acc} = {lam}({acc}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f"{src_free}"
+                    f"{acc};"
+                    f"{CLOSE}"
                 )
 
         # ── select_many (C gen defer) ─────────────────────────────
