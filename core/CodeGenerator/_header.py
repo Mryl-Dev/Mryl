@@ -35,12 +35,19 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self._emit("")
 
     def _collect_vec_elem_types(self, program) -> set:
-        """AST を走査して動的配列 (array_size == -1) の要素型名を収集する """
+        """AST を走査して動的配列 (array_size == -1) の要素型名を収集する。
+        Box<T> 要素は "Box_T" 形式（例: Box_i32）で登録する。
+        """
         types = set()
 
         def walk_type(t):
             if t and getattr(t, 'array_size', None) == -1:
-                types.add(t.name)
+                if t.name == "Box" and getattr(t, 'type_args', None):
+                    # Box<T>[] → "Box_T" として登録
+                    inner_name = t.type_args[0].name if t.type_args else "i32"
+                    types.add(f"Box_{inner_name}")
+                else:
+                    types.add(t.name)
 
         def walk_stmt(s):
             if s is None:
@@ -68,7 +75,9 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         return types
 
     def _emit_vec_helpers(self, elem_types: set):
-        """MrylVec_<T> 構造体とヘルパー関数を出力する """
+        """MrylVec_<T> 構造体とヘルパー関数を出力する。
+        "Box_T" 形式の要素型は T* ポインタ型として扱う（Vec<Box<T>> サポート）。
+        """
         _c_map = {
             "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
             "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
@@ -80,7 +89,12 @@ class CodeGeneratorHeaderMixin(_CodeGeneratorBase):
         self._emit("// ============================================================")
         self._emit("")
         for et in sorted(elem_types):
-            ct = _c_map.get(et, et if et not in _c_map else _c_map[et])
+            # Box_T 形式: 要素の C 型は T* （Box<T> = ヒープポインタ）
+            if et.startswith("Box_"):
+                inner_mryl = et[4:]  # "Box_i32" → "i32"
+                ct = _c_map.get(inner_mryl, "int32_t") + "*"
+            else:
+                ct = _c_map.get(et, et if et not in _c_map else _c_map[et])
             T, C = et, ct
             self._emit(f"typedef struct {{ {C}* data; int32_t len; int32_t cap; }} MrylVec_{T};")
             self._emit(f"static inline MrylVec_{T} mryl_vec_{T}_new(void) {{")

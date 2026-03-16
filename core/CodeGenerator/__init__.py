@@ -97,6 +97,10 @@ class CodeGenerator(
         self.current_return_type         = None  # 現在処理中の関数の戻り値型
         self.enums                       = {}    # name -> EnumDecl
         self.ident_renames               = {}    # Mryl変数名 → C 安全変数名
+        self.has_user_box                = False # ユーザー定義 struct Box があるかキャッシュ
+        self.local_box_vars              = []    # [(c_var_name, type_node)] Box 変数（宣言順）
+        self.box_inner_moved             = set() # 内部ポインタが別変数に移動済みの c_var_name 集合
+        self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)] Vec<Box<T>> 変数
 
     # ------------------------------------------------------------------
     # メインエントリポイント
@@ -105,6 +109,7 @@ class CodeGenerator(
         """プログラム AST を受け取り、C ソースコード文字列を返す """
         self.code                        = []
         self.structs                     = program.structs
+        self.has_user_box                = any(s.name == "Box" for s in program.structs)
         self.lambda_counter              = 0
         self.pending_lambdas             = []
         self.pending_async_lambda_blocks = []
@@ -127,6 +132,9 @@ class CodeGenerator(
         self.uses_str_find               = False
         self.uses_str_split              = False
         self.ident_renames               = {}
+        self.local_box_vars              = []    # [(c_var_name, type_node)]
+        self.box_inner_moved             = set() # 内部ポインタ移動済みの c_var_name 集合
+        self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)]
 
         # 全関数をキャッシュ
         self.program_functions = {func.name: func for func in program.functions}
@@ -455,6 +463,9 @@ class CodeGenerator(
         self.local_string_vars   = []
         self.local_closure_envs  = []
         self.closure_var_env_ptrs = {}
+        self.local_box_vars      = []    # Box 変数追跡（関数スコープ）
+        self.box_inner_moved     = set() # 内部ポインタ移動済み集合（関数スコープ）
+        self.local_box_vec_vars  = []    # Vec<Box<T>> 変数追跡（関数スコープ）
         self.temp_string_counter = 0
         saved_renames            = self.ident_renames.copy()
         self.ident_renames       = {}
@@ -511,6 +522,12 @@ class CodeGenerator(
             # heap alloc した closure env を解放（返値にならなかったもの）
             for env_ptr in self.local_closure_envs:
                 self._emit(f"free({env_ptr});")
+            # Box 変数を宣言の逆順で解放（多重 Box は深い方から順に free）
+            for (vn, tn) in reversed(self.local_box_vars):
+                self._emit_box_free(vn, tn)
+            # Vec<Box<T>> 変数: 要素を先に free してから .data を free
+            for (vn, _inner_tn) in reversed(self.local_box_vec_vars):
+                self._emit_box_vec_free(vn)
 
         if not has_return:
             if func.name == "main":
@@ -579,10 +596,17 @@ class CodeGenerator(
         self.indent_level += 1
 
         # _generate_return 内の cleanup が参照するためメソッド開始時に初期化する
+        # Box 系も同様にリセットしないと前のメソッドの状態が漏れる（CRITICAL）
         saved_str_vars           = getattr(self, 'local_string_vars', [])
         saved_temp_ctr           = getattr(self, 'temp_string_counter', 0)
+        saved_box_vars           = self.local_box_vars
+        saved_box_inner          = self.box_inner_moved
+        saved_box_vec_vars       = self.local_box_vec_vars
         self.local_string_vars   = []
         self.temp_string_counter = 0
+        self.local_box_vars      = []
+        self.box_inner_moved     = set()
+        self.local_box_vec_vars  = []
 
         # env に self と引数を登録（_infer_expr_type が struct フィールド型を解決できるようにする）
         method_env: dict = {}
@@ -609,10 +633,17 @@ class CodeGenerator(
         if not has_return:
             for var_name in self.local_string_vars:
                 self._emit(f"free_mryl_string({var_name});")
+            for (vn, tn) in reversed(self.local_box_vars):
+                self._emit_box_free(vn, tn)
+            for (vn, _tn) in reversed(self.local_box_vec_vars):
+                self._emit_box_vec_free(vn)
 
         # 復元
         self.local_string_vars   = saved_str_vars
         self.temp_string_counter = saved_temp_ctr
+        self.local_box_vars      = saved_box_vars
+        self.box_inner_moved     = saved_box_inner
+        self.local_box_vec_vars  = saved_box_vec_vars
 
         self.indent_level -= 1
         self._emit("}")
