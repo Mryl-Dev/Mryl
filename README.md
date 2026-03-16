@@ -244,7 +244,7 @@ Mryl は以下の機能を備えています：
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
 - **フォーマット文字列**：Rust 風の `println("i = {}", i)` 表記
 - **関数**：戻り値型指定、複数パラメータ、前方宣言による相互再帰
-- **ラムダ式**：`(x, y) => x + y` の無名関数
+- **ラムダ式**：`(x, y) => x + y` の無名関数（クロージャキャプチャ対応・C コード生成は fat pointer 方式）
 - **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
@@ -1789,7 +1789,7 @@ nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 | `filter(fn(T)->bool)` | `Iter<T>` | `Where` | 条件を満たす要素だけ残す |
 | `take(n: i32)` | `Iter<T>` | `Take` | 先頭 n 件 |
 | `skip(n: i32)` | `Iter<T>` | `Skip` | 先頭 n 件をスキップ |
-| `select_many(fn(T)->U[])` | `Iter<U>` | `SelectMany` | map + flatten |
+| `select_many(fn(T)->U[])` | `Iter<U>` | `SelectMany` | map + flatten（v0.5.0 #65） |
 
 #### 終端操作（評価・消費）
 
@@ -1803,8 +1803,6 @@ nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 | `first()` | `Result<T, string>` | `First` | 先頭要素（空なら `Err`） |
 | `any(fn(T)->bool)` | `bool` | `Any` | 条件を満たす要素が存在するか |
 | `all(fn(T)->bool)` | `bool` | `All` | 全要素が条件を満たすか |
-
-> **Note**: `select_many` は Python インタプリタモードのみ対応。C ネイティブ実行は v0.5.0 で対応予定。
 
 ---
 
@@ -1832,13 +1830,13 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fn 型パラメータ**（高階関数・コールバック）  
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
-✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）
-✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）
-✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）
-✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）
-✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）
-✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）
-✓ Python インタプリタ + C コードジェネレータの二重実行エンジン
+✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）  
+✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）  
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）  
+✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）  
+✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
+✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
+✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
 
 学習用言語としても、趣味の言語としても十分な完成度を持っています。
 
@@ -1879,6 +1877,9 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_29_string_find.ml](../tests/test_29_string_find.ml) | `string.find()`（`Option<i32>` 返し・各種パターン） | ✅ Python + C + Native |
 | [tests/test_30_string_split.ml](../tests/test_30_string_split.ml) | `string.split()`（区切り文字・境界値・空文字） | ✅ Python + C + Native |
 | [tests/test_31_iter_linq.ml](../tests/test_31_iter_linq.ml) | `Iter<T>` / LINQ 全 12 メソッド（C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_32_iter_chain_free.ml](../tests/test_32_iter_chain_free.ml) | チェーン中間 `MrylVec` のメモリ解放（#62） | ✅ Python + C + Native |
+| [tests/test_33_select_many.ml](../tests/test_33_select_many.ml) | `select_many` C コード生成（#65、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_34_closure_capture.ml](../tests/test_34_closure_capture.ml) | クロージャキャプチャ fat pointer 実装（#44、C0/C1/MC/DC） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

@@ -73,29 +73,69 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
 
         var_type = self._type_to_c(type_node)
 
-        # ラムダ式: 関数ポインタ変数として宣言
+        # ラムダ式: fat pointer struct 変数として宣言
         if init_expr_class == "Lambda":
-            lam_name, ret_type, params_str, captures = self._generate_lambda_inline(stmt.init_expr, stmt.name)
+            lam_name, ret_type, params_str, _ = self._generate_lambda_inline(stmt.init_expr, stmt.name)
             c_var_name = _safe_c_name(stmt.name)
             if c_var_name != stmt.name:
                 self.ident_renames[stmt.name] = c_var_name
-            if captures:
-                env_struct   = f"{lam_name}_env_t"
-                closure_type = f"{lam_name}_closure_t"
-                self._emit(f"{closure_type} {c_var_name};")
-                self._emit(f"{c_var_name}.fn = {lam_name};")
-                for cap_name in captures:
-                    self._emit(f"{c_var_name}.env.{cap_name} = {cap_name};")
-                self.env[-1][stmt.name] = "fn_closure"
-                self.closure_env_types[stmt.name] = lam_name
-            else:
+
+            if ret_type == "MrylTask*":
+                # async lambda: 旧挙動を維持
                 self._emit(f"{ret_type} (*{c_var_name})({params_str}) = {lam_name};")
-                if ret_type == "MrylTask*":
-                    self.env[-1][stmt.name] = "async_fn"
-                    self.async_lambda_factories[stmt.name] = lam_name
-                else:
-                    self.env[-1][stmt.name] = "fn"
+                self.env[-1][stmt.name] = "async_fn"
+                self.async_lambda_factories[stmt.name] = lam_name
+                return
+
+            info     = self.lambda_captures.get(lam_name, {})
+            captures = info.get('captures', {})
+            ret_c    = info.get('ret_c', ret_type)
+            arg_cs   = info.get('arg_cs', [])
+
+            # MrylFn_* struct 型名を決定
+            if type_node and type_node.name == "fn" and getattr(type_node, 'type_args', None):
+                fn_c_type = self._type_to_c(type_node)
+            else:
+                arg_part  = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs) if arg_cs else "void"
+                ret_part  = ret_c.replace("*", "Ptr").replace(" ", "_")
+                fn_c_type = f"MrylFn_{arg_part}_ret_{ret_part}"
+                self.fn_type_registry.add((tuple(arg_cs), ret_c, fn_c_type))
+
+            if captures:
+                env_struct = f"{lam_name}_env_t"
+                # ⑨ lam_name ベースで一意な env ポインタ名（変数名衝突を回避）
+                env_ptr    = f"__env_{lam_name}"
+                self._emit(f"{env_struct}* {env_ptr} = ({env_struct}*)malloc(sizeof({env_struct}));")
+                for cap_name in captures:
+                    c_cap = self.ident_renames.get(cap_name, _safe_c_name(cap_name))
+                    self._emit(f"{env_ptr}->{cap_name} = {c_cap};")
+                self._emit(f"{fn_c_type} {c_var_name} = {{{lam_name}, {env_ptr}}};")
+                # ⑥ 返値にならない closure env を追跡（関数末尾で free）
+                self.local_closure_envs.append(env_ptr)
+                # ⑥ var_name → env_ptr の逆引き（return 時に free スキップするため）
+                self.closure_var_env_ptrs[stmt.name] = env_ptr
+            else:
+                self._emit(f"{fn_c_type} {c_var_name} = {{{lam_name}, NULL}};")
+
+            self.env[-1][stmt.name] = "fn"
+            # ⑦ キャプチャ型解決用に MrylFn_* 型名を登録
+            self.fn_var_c_types[stmt.name] = fn_c_type
             return
+
+        # FunctionCall が fn(T)->U を返す場合（型注釈なし）: MrylFn_* struct として宣言（issue ①）
+        if init_expr_class == "FunctionCall" and type_node is None:
+            fn_decl = self.program_functions.get(stmt.init_expr.name)
+            if fn_decl and fn_decl.return_type and fn_decl.return_type.name == "fn" \
+                    and getattr(fn_decl.return_type, 'type_args', None):
+                fn_c_type  = self._type_to_c(fn_decl.return_type)
+                c_var_name = _safe_c_name(stmt.name)
+                if c_var_name != stmt.name:
+                    self.ident_renames[stmt.name] = c_var_name
+                rhs = self._generate_expr(stmt.init_expr)
+                self._emit(f"{fn_c_type} {c_var_name} = {rhs};")
+                self.env[-1][stmt.name] = "fn"
+                self.fn_var_c_types[stmt.name] = fn_c_type
+                return
 
         # static fn 参照（has_parens=False の EnumVariantExpr）を fn 型変数として宣言
         if init_expr_class == "EnumVariantExpr" and not stmt.init_expr.has_parens:
@@ -216,6 +256,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 elif type_node.name == "Option" and getattr(type_node, 'type_args', None):
                     inner_name = type_node.type_args[0].name if type_node.type_args else "int32_t"
                     mryl_name = f"MrylOption_{inner_name}"
+                # fn 型: TypeChecker が type_node を付与した場合も fat pointer 呼び出しを正しく解決できるよう
+                # env を "fn" で登録し fn_var_c_types に C 型名を記録する
+                elif type_node.name == "fn":
+                    self.env[-1][stmt.name] = "fn"
+                    self.fn_var_c_types[stmt.name] = var_type
+                    return
                 else:
                     # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
                     mryl_name = type_node.name
@@ -299,14 +345,46 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             if inferred == "string":
                 return_var_to_deep_copy = stmt.expr.name
 
-        # --- cleanup: return より前に文字列変数を解放 ---
+        # --- cleanup: return より前に文字列変数・closure env を解放 ---
         # 返値となる変数は use-after-free を防ぐためここでは解放しない
         for var_name in list(self.local_string_vars):
             if var_name != return_var_to_deep_copy:
                 self._emit(f"free_mryl_string({var_name});")
+        # 返値にならない closure env を解放（⑥: 返却される fn 変数の env は free 不可）
+        return_var_name = stmt.expr.name if stmt.expr and stmt.expr.__class__.__name__ == "VarRef" else None
+        skip_env_ptr = self.closure_var_env_ptrs.get(return_var_name) if return_var_name else None
+        for env_ptr in list(self.local_closure_envs):
+            if env_ptr != skip_env_ptr:
+                self._emit(f"free({env_ptr});")
 
         if stmt.expr:
             expr_class = stmt.expr.__class__.__name__
+
+            # Lambda を直接 return: heap alloc env + fat pointer struct を返す
+            if expr_class == "Lambda":
+                lam_name = self._generate_lambda(stmt.expr)
+                info     = self.lambda_captures.get(lam_name, {})
+                captures = info.get('captures', {})
+                ret_c    = info.get('ret_c', 'int32_t')
+                arg_cs   = info.get('arg_cs', [])
+                ret_type_str = self.current_return_type
+                if not ret_type_str:
+                    arg_part     = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs) if arg_cs else "void"
+                    ret_part     = ret_c.replace("*", "Ptr").replace(" ", "_")
+                    ret_type_str = f"MrylFn_{arg_part}_ret_{ret_part}"
+                    self.fn_type_registry.add((tuple(arg_cs), ret_c, ret_type_str))
+                if captures:
+                    env_struct = f"{lam_name}_env_t"
+                    env_ptr    = f"__ret_env_{lam_name}"
+                    self._emit(f"{env_struct}* {env_ptr} = ({env_struct}*)malloc(sizeof({env_struct}));")
+                    for n in captures:
+                        c_n = self.ident_renames.get(n, _safe_c_name(n))
+                        self._emit(f"{env_ptr}->{n} = {c_n};")
+                    self._emit(f"return ({ret_type_str}){{{lam_name}, {env_ptr}}};")
+                else:
+                    self._emit(f"return ({ret_type_str}){{{lam_name}, NULL}};")
+                return
+
             if expr_class == "FunctionCall" and stmt.expr.name in ("Ok", "Err") \
                     and self.current_return_type:
                 val_code    = self._generate_expr(stmt.expr.args[0]) if stmt.expr.args else "0"

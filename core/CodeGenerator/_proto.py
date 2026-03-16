@@ -34,11 +34,17 @@ class _CodeGeneratorBase:
     sm_await_handles:            dict[int, str]
     capture_map:                 dict[str, str]
     closure_env_types:           dict[str, str]
+    lambda_captures:             dict[str, dict]
+    fn_type_registry:            set
+    fn_var_c_types:              dict[str, str]   # var_name → MrylFn_* 型名（キャプチャ型解決用）
+    thunk_counter:               int
     result_type_registry:        set[tuple[str, str, str]]
     current_return_type:         str | None
     enums:                       dict[str, Any]
     ident_renames:               dict[str, str]
     local_string_vars:           list[str]
+    local_closure_envs:          list[str]        # heap alloc した env ポインタ名（関数末尾で free）
+    closure_var_env_ptrs:        dict[str, str]   # {var_name: env_ptr_name}（return 時の free スキップ用）
     vec_var_types:               dict[str, str]
 
     # ------------------------------------------------------------------

@@ -51,13 +51,16 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
                 for scope in reversed(self.env):
                     if n.name in scope:
                         t   = scope[n.name]
-                        c_t = {
-                            "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
-                            "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
-                            "f32": "float",  "f64": "double",
-                            "string": "MrylString", "bool": "int",
-                            "fn": "void*", "fn_closure": "void*", "int": "int32_t",
-                        }.get(t, "int32_t")
+                        # fn/fn_closure 型は fn_var_c_types から実際の MrylFn_* 型を取得
+                        if t in ("fn", "fn_closure"):
+                            c_t = self.fn_var_c_types.get(n.name, "void*")
+                        else:
+                            c_t = {
+                                "i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
+                                "u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
+                                "f32": "float",  "f64": "double",
+                                "string": "MrylString", "bool": "int", "int": "int32_t",
+                            }.get(t, "int32_t")
                         captures[n.name] = c_t
                         break
             elif cls in ('BinaryOp', 'CompareOp'):
@@ -172,6 +175,13 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
         self.temp_string_counter = saved_temp_str_ctr
 
         self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines, captures))
+        # fat pointer のため arg_cs / ret_c / captures を登録（_stmt.py / _expr.py が参照）
+        arg_cs = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in expr.params]
+        self.lambda_captures[lam_name] = {
+            'captures': captures,
+            'ret_c':    ret_type,
+            'arg_cs':   arg_cs,
+        }
         return lam_name
 
     def _generate_lambda_inline(self, expr, var_name: str):
@@ -232,6 +242,13 @@ class CodeGeneratorLambdaMixin(_CodeGeneratorBase):
         self.temp_string_counter = saved_temp_str_ctr
 
         self.pending_lambdas.append((lam_name, ret_type, params_str, body_lines_code, captures))
+        # fat pointer のため arg_cs / ret_c / captures を登録
+        arg_cs = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in expr.params]
+        self.lambda_captures[lam_name] = {
+            'captures': captures,
+            'ret_c':    ret_type,
+            'arg_cs':   arg_cs,
+        }
         return lam_name, ret_type, params_str, captures
 
     def _generate_async_lambda(self, expr, lam_name: str) -> str:

@@ -38,7 +38,7 @@
 - **構造体とメソッド**: オブジェクト指向プログラミングのサポート
 - **メモリ安全性**: 自動メモリ管理（malloc/free の自動化）
 - **完全な演算子セット**: 論理、ビット、複合代入演算子を完全サポート
-- **ラムダ式**: `(x, y) => x + y` の無名関数（async ラムダ含む）
+- **ラムダ式**: `(x, y) => x + y` の無名関数（async ラムダ含む）、外部変数のクロージャキャプチャ対応（C コード生成は fat pointer 方式）
 - **fn 型パラメータ**: 関数をコールバックとして渡せる高階関数
 - **fix キーワード**: 不変変数・不変関数パラメータの宣言
 - **前方宣言**: `fn name(...) -> T;` 構文による相互再帰サポート
@@ -875,6 +875,36 @@ int main(void) {
 ```
 
 **static 関数の挿入位置**: 最初の関数定義の直前
+
+**クロージャキャプチャ（fat pointer 方式）**
+
+外部変数を参照するラムダは、キャプチャ変数を保持する環境構造体と関数ポインタをペアにした fat pointer として生成されます。
+
+```mryl
+fn make_adder(n: i32) -> fn(i32) -> i32 {
+    return (x: i32) => x + n;  // n をキャプチャ
+}
+```
+
+```c
+// キャプチャ変数を保持する環境構造体
+typedef struct { int32_t n; } __lambda_0_env_t;
+
+// 第1引数に env_ptr を受け取るラムダ本体
+static int32_t __lambda_0(void* env_ptr, int32_t x) {
+    __lambda_0_env_t* __env = (__lambda_0_env_t*)env_ptr;
+    return (x + __env->n);
+}
+
+// fat pointer 型（関数ポインタ + 環境ポインタのペア）
+typedef struct { int32_t (*fn)(void*, int32_t); void* env; } MrylClosure_i32_i32;
+
+int32_t make_adder_result_call(MrylClosure_i32_i32 c, int32_t x) {
+    return c.fn(c.env, x);
+}
+```
+
+- キャプチャ変数がない通常ラムダは fat pointer を使わず、従来の関数ポインタのみで生成されます。
 
 ### Python インタプリタでの動作
 

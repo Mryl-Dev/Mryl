@@ -146,6 +146,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             for scope in reversed(self.env):
                 if expr.name in scope and scope[expr.name] in ('fn', 'fn_closure'):
                     return self._generate_function_call(expr)
+            # Lambda 引数を含む場合は fat pointer 変換が必要なので _generate_function_call に委譲（issue ②）
+            if any(arg.__class__.__name__ == "Lambda" for arg in expr.args):
+                return self._generate_function_call(expr)
             # Ok/Err/Some は compound literal 生成が必要なので _generate_function_call に委譲
             if expr.name in ("Ok", "Err", "Some"):
                 return self._generate_function_call(expr)
@@ -205,14 +208,11 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 factory = self.async_lambda_factories.get(expr.name, expr.name)
                 args    = ", ".join(self._generate_expr(arg) for arg in expr.args)
                 return f"{factory}({args})"
-            if expr.name in scope and scope[expr.name] == "fn":
-                c_name = self.ident_renames.get(expr.name, _safe_c_name(expr.name))
-                args   = ", ".join(self._generate_expr(arg) for arg in expr.args)
-                return f"{c_name}({args})"
-            if expr.name in scope and scope[expr.name] == "fn_closure":
+            if expr.name in scope and scope[expr.name] in ("fn", "fn_closure"):
+                # fat pointer 規約で統一: c_name.fn(args, c_name.env)
                 c_name   = self.ident_renames.get(expr.name, _safe_c_name(expr.name))
                 args     = ", ".join(self._generate_expr(arg) for arg in expr.args)
-                all_args = f"{args}, &{c_name}.env" if args else f"&{c_name}.env"
+                all_args = f"{args}, {c_name}.env" if args else f"{c_name}.env"
                 return f"{c_name}.fn({all_args})"
 
         func = self.program_functions.get(expr.name)
@@ -232,6 +232,36 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             if arg_type == "bool":
                 arg_code = self._generate_expr(expr.args[0])
                 return f"_mryl_to_string_bool({arg_code})"
+
+        # Lambda 引数を fat pointer struct に変換（issue ②⑧: ブロックスコープ変数でアドレス確保）
+        has_lambda_arg = any(arg.__class__.__name__ == "Lambda" for arg in expr.args)
+        if has_lambda_arg:
+            args_list = []
+            for i, arg in enumerate(expr.args):
+                if arg.__class__.__name__ == "Lambda":
+                    lam_name_v = self._generate_lambda(arg)
+                    info       = self.lambda_captures.get(lam_name_v, {})
+                    caps       = info.get('captures', {})
+                    ret_c_v    = info.get('ret_c', 'int32_t')
+                    arg_cs_v   = info.get('arg_cs', [])
+                    arg_part   = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs_v) if arg_cs_v else "void"
+                    ret_part   = ret_c_v.replace("*", "Ptr").replace(" ", "_")
+                    fn_c_type  = f"MrylFn_{arg_part}_ret_{ret_part}"
+                    self.fn_type_registry.add((tuple(arg_cs_v), ret_c_v, fn_c_type))
+                    if caps:
+                        env_struct = f"{lam_name_v}_env_t"
+                        env_var    = f"__lam_e_{lam_name_v}"
+                        fields     = ", ".join(
+                            f".{n} = {self.ident_renames.get(n, _safe_c_name(n))}" for n in caps
+                        )
+                        # ⑧ ブロックスコープのローカル変数として emit（stmt expr より安全）
+                        self._emit(f"{env_struct} {env_var} = {{{fields}}};")
+                        args_list.append(f"({fn_c_type}){{{lam_name_v}, &{env_var}}}")
+                    else:
+                        args_list.append(f"({fn_c_type}){{{lam_name_v}, NULL}}")
+                else:
+                    args_list.append(self._generate_expr(arg))
+            return f"{expr.name}({', '.join(args_list)})"
 
         args = ", ".join(self._generate_expr(arg) for arg in expr.args)
         return f"{expr.name}({args})"
@@ -717,16 +747,65 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         OPEN  = f"({{{NL}"
         CLOSE = f"\n{base_indent}}})"
 
-        def _lam(arg_idx: int) -> str:
-            """引数 arg_idx のラムダ / 関数参照を C 関数名として返す。"""
+        def _lam_full(arg_idx: int) -> tuple:
+            """(env_setup, fn_expr, env_arg) を返す。fat pointer 規約対応。
+            env_setup: ループ前に emit すべき env 初期化コード（"" or "TYPE var = {...};{NL}"）
+            fn_expr:   呼び出す C 関数式（lam_name or c_name.fn）
+            env_arg:   env 引数の C 式（"&var", "c_name.env", "NULL"）
+            """
             arg = expr.args[arg_idx]
             if isinstance(arg, Lambda):
-                return self._generate_lambda(arg)
-            return self._generate_expr(arg)
+                lam_name_v = self._generate_lambda(arg)
+                info       = self.lambda_captures.get(lam_name_v, {})
+                captures   = info.get('captures', {})
+                if captures:
+                    env_struct = f"{lam_name_v}_env_t"
+                    env_var    = f"__lam_env_{idx}_{arg_idx}"
+                    fields     = ", ".join(
+                        f".{n} = {self.ident_renames.get(n, _safe_c_name(n))}" for n in captures
+                    )
+                    env_setup  = f"{env_struct} {env_var} = {{{fields}}};{NL}"
+                    env_arg    = f"&{env_var}"
+                else:
+                    env_setup = ""
+                    env_arg   = "NULL"
+                return env_setup, lam_name_v, env_arg
+            else:
+                # 変数参照: fn/fn_closure なら fat pointer から取得
+                var_type = None
+                if hasattr(arg, 'name'):
+                    for scope in reversed(self.env):
+                        if arg.name in scope:
+                            var_type = scope[arg.name]
+                            break
+                if var_type in ('fn', 'fn_closure'):
+                    c_name = self.ident_renames.get(arg.name, _safe_c_name(arg.name))
+                    return "", f"{c_name}.fn", f"{c_name}.env"
+                # 関数参照（issue ③）: thunk を自動生成して void* __e に対応
+                c_expr   = self._generate_expr(arg)
+                fn_decl  = self.program_functions.get(getattr(arg, 'name', ''))
+                if fn_decl:
+                    thunk_name = f"__thunk_{self.thunk_counter}"
+                    self.thunk_counter += 1
+                    t_params_c  = [
+                        f"{self._type_to_c(p.type_node) if p.type_node else 'int32_t'} {p.name}"
+                        for p in fn_decl.params
+                    ]
+                    t_params_str = ", ".join(t_params_c)
+                    t_ret        = self._type_to_c(fn_decl.return_type) if fn_decl.return_type else "void"
+                    call_args    = ", ".join(p.name for p in fn_decl.params)
+                    ret_kw       = "return " if t_ret != "void" else ""
+                    thunk_body   = [f"    {ret_kw}{fn_decl.name}({call_args});"]
+                    self.pending_lambdas.append((thunk_name, t_ret, t_params_str, thunk_body, {}))
+                    arg_cs_t = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in fn_decl.params]
+                    self.lambda_captures[thunk_name] = {'captures': {}, 'ret_c': t_ret, 'arg_cs': arg_cs_t}
+                    return "", thunk_name, "NULL"
+                # fallback: env 引数なし（コンパイル警告が出る可能性あり）
+                return "", c_expr, "NULL"
 
         # ── select ──────────────────────────────────────────────
         if method == 'select':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             # 出力型推論: Lambda の inferred_return_type か fallback で et
             lam_arg = expr.args[0]
             if isinstance(lam_arg, Lambda):
@@ -739,9 +818,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"MrylVec_{out_et} {r} = mryl_vec_{out_et}_new();{NL}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" mryl_vec_{out_et}_push(&{r}, {lam}({src_ref}.data[{i_var}])); }}{NL}"
+                f" mryl_vec_{out_et}_push(&{r}, {lam_fn}({src_ref}.data[{i_var}], {lam_env})); }}{NL}"
                 f"{src_free}"
                 f"{r};"
                 f"{CLOSE}"
@@ -749,14 +829,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         # ── filter ──────────────────────────────────────────────
         if method == 'filter':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             r = f"__iter_{idx}"
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"MrylVec_{et} {r} = mryl_vec_{et}_new();{NL}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" if ({lam}({src_ref}.data[{i_var}])) {{"
+                f" if ({lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{"
                 f" mryl_vec_{et}_push(&{r}, {src_ref}.data[{i_var}]); }} }}{NL}"
                 f"{src_free}"
                 f"{r};"
@@ -831,14 +912,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         # ── any ──────────────────────────────────────────────────
         if method == 'any':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             found = f"__found_{idx}"
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"int {found} = 0;{NL}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" if ({lam}({src_ref}.data[{i_var}])) {{ {found} = 1; break; }} }}{NL}"
+                f" if ({lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{ {found} = 1; break; }} }}{NL}"
                 f"{src_free}"
                 f"{found};"
                 f"{CLOSE}"
@@ -846,14 +928,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         # ── all ──────────────────────────────────────────────────
         if method == 'all':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             ok  = f"__ok_{idx}"
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"int {ok} = 1;{NL}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" if (!{lam}({src_ref}.data[{i_var}])) {{ {ok} = 0; break; }} }}{NL}"
+                f" if (!{lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{ {ok} = 0; break; }} }}{NL}"
                 f"{src_free}"
                 f"{ok};"
                 f"{CLOSE}"
@@ -861,12 +944,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
 
         # ── for_each ─────────────────────────────────────────────
         if method == 'for_each':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" {lam}({src_ref}.data[{i_var}]); }}{NL}"
+                f" {lam_fn}({src_ref}.data[{i_var}], {lam_env}); }}{NL}"
                 f"{src_free}"
                 f"(void)0;"
                 f"{CLOSE}"
@@ -893,7 +977,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         if method == 'aggregate':
             if len(expr.args) == 1:
                 # 初期値なし: Result<T, string>
-                lam    = _lam(0)
+                lam_setup, lam_fn, lam_env = _lam_full(0)
                 struct = f"MrylResult_{ct}_MrylString"
                 self.result_type_registry.add((ct, "MrylString", struct))
                 r   = f"__agg_{idx}"
@@ -901,13 +985,14 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return (
                     f"{OPEN}"
                     f"{src_cap}"
+                    f"{lam_setup}"
                     f"{struct} {r};{NL}"
                     f"if ({src_ref}.len == 0) {{"
                     f" {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }}{NL}"
                     f"else {{{NL}"
                     f"    {ct} {acc} = {src_ref}.data[0];{NL}"
                     f"    for (int32_t {i_var} = 1; {i_var} < {src_ref}.len; {i_var}++) {{"
-                    f" {acc} = {lam}({acc}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f" {acc} = {lam_fn}({acc}, {src_ref}.data[{i_var}], {lam_env}); }}{NL}"
                     f"    {r}.is_ok = 1; {r}.data.ok_val = {acc};{NL}}}{NL}"
                     f"{src_free}"
                     f"{r};"
@@ -916,16 +1001,17 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             else:
                 # 初期値あり: aggregate(init, fn) -> U
                 init_c  = self._generate_expr(expr.args[0])
-                lam     = _lam(1)
+                lam_setup, lam_fn, lam_env = _lam_full(1)
                 init_t  = self._infer_expr_type(expr.args[0])
                 init_ct = self._type_to_c_base(init_t) if init_t not in ("i32", "any") else ct
                 acc     = f"__acc_{idx}"
                 return (
                     f"{OPEN}"
                     f"{src_cap}"
+                    f"{lam_setup}"
                     f"{init_ct} {acc} = {init_c};{NL}"
                     f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                    f" {acc} = {lam}({acc}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f" {acc} = {lam_fn}({acc}, {src_ref}.data[{i_var}], {lam_env}); }}{NL}"
                     f"{src_free}"
                     f"{acc};"
                     f"{CLOSE}"
@@ -938,7 +1024,7 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         # __inner.data の free: ラムダが新規確保した場合のみ行う。
         #   VarRef を返す場合はポインタ共有のため free 不可（UB 防止）。
         if method == 'select_many':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
 
             # out_et: 展開後の要素型 (U)。Lambda の inferred_return_type.name から取得。
             lam_arg = expr.args[0] if expr.args else None
@@ -972,9 +1058,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             return (
                 f"{OPEN}"
                 f"{src_cap}"
+                f"{lam_setup}"
                 f"MrylVec_{out_et} {result} = mryl_vec_{out_et}_new();{NL}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{{NL2}"
-                f"MrylVec_{out_et} {inner} = {lam}({src_ref}.data[{i_var}]);{NL2}"
+                f"MrylVec_{out_et} {inner} = {lam_fn}({src_ref}.data[{i_var}], {lam_env});{NL2}"
                 f"for (int32_t {j_var} = 0; {j_var} < {inner}.len; {j_var}++) {{"
                 f" mryl_vec_{out_et}_push(&{result}, {inner}.data[{j_var}]); }}{NL2}"
                 f"{inner_free}"
