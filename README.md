@@ -128,7 +128,7 @@ fn main() -> i32 {
 |------|------|
 | **OS** | Windows 11 25H2（ビルド 26200.7623） |
 | **エディタ** | Visual Studio Code 64bit |
-| **開発言語** | Python 3.9.x, C |
+| **開発言語** | Python 3.14.x, C |
 | **コンパイラ** | GCC 16.0.1（Cygwin 経由） |
 | **AI エージェント** | GitHub Copilot - Claude Sonnet 4.6（テスト・デバッグ補助）|
 
