@@ -130,7 +130,7 @@ fn main() -> i32 {
 | **エディタ** | Visual Studio Code 64bit |
 | **開発言語** | Python 3.14.x, C |
 | **コンパイラ** | GCC 16.0.1（Cygwin 経由） |
-| **AI エージェント** | GitHub Copilot - Claude Sonnet 4.6（テスト・デバッグ補助）|
+| **AI エージェント** | Claude Code - Claude Sonnet 4.6（テスト・デバッグ補助）|
 
 > AI エージェントはテストケースの生成・デバッグ支援に使用しており、言語コア実装には関与していません。
 
