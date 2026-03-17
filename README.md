@@ -1410,6 +1410,41 @@ let bbb: Box<Box<Box<i32>>>      = Box::new(Box::new(Box::new(7)));
 let bbbb: Box<Box<Box<Box<i32>>>> = Box::new(Box::new(Box::new(Box::new(3))));
 ```
 
+### 自動メモリ解放（Auto Free）
+
+`Box<T>` 変数は**スコープ終了時・`return` 文実行前**に自動的に `free` されます。
+手動で `free` を呼ぶ必要はありません。
+
+```mryl
+fn example() {
+    let b: Box<i32> = Box::new(10);
+    println("{}", *b);
+    // スコープ終了時に自動 free(b)
+}
+```
+
+#### 多重ポインタの free 順序
+
+`Box<Box<T>>` の場合、内側から外側の順に free されます。
+
+```mryl
+let bb: Box<Box<i32>> = Box::new(Box::new(5));
+let inner: Box<i32>   = *bb;   // inner に内部ポインタを取り出し
+// → free(bb) のみ（inner は別途 free される）
+
+let bb2: Box<Box<i32>> = Box::new(Box::new(5));
+// inner を取り出さない場合 → free(*bb2); free(bb2) の順
+```
+
+#### Vec<Box<T>>
+
+`Box<T>[]`（可変長配列の各要素が Box）は、スコープ終了時に要素ごと free した後、配列本体も free されます。
+
+```mryl
+let boxes: Box<i32>[] = ...;
+// → for 各要素 { free(element) } → free(boxes.data)
+```
+
 ---
 
 ## 配列（固定長）
@@ -1831,7 +1866,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
 ✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）  
-✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）  
+✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ / スコープ自動 free / `Vec<Box<T>>` 対応）  
 ✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）  
 ✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）  
 ✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
@@ -1880,6 +1915,7 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_32_iter_chain_free.ml](../tests/test_32_iter_chain_free.ml) | チェーン中間 `MrylVec` のメモリ解放（#62） | ✅ Python + C + Native |
 | [tests/test_33_select_many.ml](../tests/test_33_select_many.ml) | `select_many` C コード生成（#65、C0/C1/MC/DC） | ✅ Python + C + Native |
 | [tests/test_34_closure_capture.ml](../tests/test_34_closure_capture.ml) | クロージャキャプチャ fat pointer 実装（#44、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_35_box_free.ml](../tests/test_35_box_free.ml) | `Box<T>` 自動 free（スコープ・return・ループ・多重・`Vec<Box<T>>`、#66） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

@@ -132,7 +132,11 @@ Mryl/
 │   ├── test_28_box.ml               # Box<T>（生成・* deref・.unbox()・多重ポインタ）
 │   ├── test_29_string_find.ml       # string.find()（Option<i32> 返し・各種パターン）
 │   ├── test_30_string_split.ml      # string.split()（区切り文字・境界値・空文字）
-│   └── test_31_iter_linq.ml         # Iter<T> / LINQ 全 12 メソッド（C0/C1/MC/DC）
+│   ├── test_31_iter_linq.ml         # Iter<T> / LINQ 全 12 メソッド（C0/C1/MC/DC）
+│   ├── test_32_iter_chain_free.ml   # チェーン中間 MrylVec のメモリ解放（#62）
+│   ├── test_33_select_many.ml       # select_many C コード生成（#65、C0/C1/MC/DC）
+│   ├── test_34_closure_capture.ml   # クロージャキャプチャ fat pointer（#44、C0/C1/MC/DC）
+│   └── test_35_box_free.ml          # Box<T> 自動 free（スコープ・return・ループ・多重・Vec<Box<T>>、#66）
 ├── my/                               # 動作確認用 Mryl コード置き場
 ├── bin/
 │   ├── Mryl.c                # 生成された C ソースコード
@@ -282,9 +286,14 @@ Mryl/
 | `*b` | デリファレンス（`UnaryOp("deref")`） |
 | `b.unbox()` | `.unbox()` メソッド — `*b` と等価 |
 | `Box<Box<T>>` | 多重ポインタ（2〜4 重以上） |
+| 自動 free（スコープ終了） | スコープ末尾で `local_box_vars` を逆順に `free` |
+| 自動 free（return） | `return` 前に `local_box_vars` / `local_box_vec_vars` を逆順に `free` |
+| 自動 free（ループ） | while / for の各イテレーション末に `_emit_loop_iteration_cleanup` で free |
+| `Box<Box<T>>` inner_moved | `let X: Box<T> = *Y` パターンで `Y` を `box_inner_moved` にマーク → `free(Y)` のみ（二重 free 防止） |
+| `Box<T>[]`（`Vec<Box<T>>`） | 要素ごと free 後に `.data` を free（`_emit_box_vec_free`） |
 | TypeChecker | `Box<T>` → `TypeNode("Box", type_args=[inner])` |
 | CodeGenerator | `Box<T>` → `T*`、`Box::new(v)` → `({ T* p = malloc(sizeof(T)); *p = v; p; })` |
-| ユーザー定義構造体との共存 | `struct Box<T>` を定義した場合は組み込み Box ではなくユーザー定義を優先 |
+| ユーザー定義構造体との共存 | `generate()` 開始時に `has_user_box` をキャッシュ。`struct Box` が存在する場合は組み込み Box を無効化 |
 
 #### 演算子
 
@@ -1764,7 +1773,7 @@ Mryl は以下の特徴を持つ、完全に機能するプログラミング言
 - ✅ **ラムダ式** (`(x, y) => x + y` 型付き関数ポインタに変換)
 - ✅ **async / await** (状態機械 + スケジューラ、MrylTask 参照カウント)
 - ✅ **Option\<T\>**（`Some` / `None` + match パターンマッチ）
-- ✅ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）
+- ✅ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ / スコープ自動 free / `Vec<Box<T>>` 対応）
 - ✅ **string 組み込みメソッド 11 種**（`find` / `split` 含む）
 - ✅ **Iter\<T\> / LINQ コレクション操作 12 メソッド**（C# LINQ 準拠）  
 
