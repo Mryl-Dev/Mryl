@@ -343,7 +343,7 @@ Mryl/
 | `to_array()` | — | `T[]` | `ToArray` |
 | `aggregate(fn)` | `fn(T,T) -> T` | `Result<T, string>` | `Aggregate`（初期値なし）|
 | `aggregate(init, fn)` | `U, fn(U,T) -> U` | `U` | `Aggregate`（初期値あり）|
-| `for_each(fn)` | `fn(T) -> void` | `void` | `ForEach` |
+| `for_each(fn)` | `fn(T) -> void` | `void` | `ForEach`（副作用専用・文としてのみ使用可） |
 | `count()` | — | `i32` | `Count` |
 | `first()` | — | `Result<T, string>` | `First` |
 | `any(fn)` | `fn(T) -> bool` | `bool` | `Any` |
@@ -355,8 +355,22 @@ Mryl/
 |---|---|
 | Interpreter | Python list comprehension / スライスで中間値を表現 |
 | TypeChecker | `_check_iter_method` で型規則を管理（`core/TypeChecker/_call.py`） |
-| CodeGenerator（式） | GCC statement expression `({ ... })` でインライン生成（`_expr.py`） |
+| CodeGenerator（`for_each` 以外） | GCC statement expression `({ ... })` でインライン生成（`_expr.py`） |
+| CodeGenerator（`for_each`） | 通常ブロック `{ ... }` として生成（GCC 拡張不使用）（`_expr.py`） |
 | CodeGenerator（型推論） | `vec_` prefix で iter メソッド戻り値型を推論（`_generic.py`） |
+
+#### `for_each` の制約
+
+`for_each` は戻り値が `void` の副作用専用操作であり、**文としてのみ使用可能**。
+TypeChecker が以下をコンパイルエラーとして検出する：
+
+```mryl
+let x = arr.for_each(...);    // NG: void を let に代入
+fix x = arr.for_each(...);    // NG: void を fix に代入
+x = arr.for_each(...);        // NG: void を代入
+return arr.for_each(...);     // NG: void を return
+arr.for_each(...);            // OK: 文として使用
+```
 
 #### 既知の制限
 
@@ -364,6 +378,7 @@ Mryl/
 |---|---|---|
 | `select_many` C コード生成未実装（`NotImplementedError`） | `issue_iter_select_many_codegen.md` | ✅ v0.5.0 #65 解決 |
 | 中間 `MrylVec` のメモリリーク | `issue_iter_intermediate_memleak.md` | ✅ v0.5.0 #62 解決 |
+| `for_each` void statement expression の GCC 拡張依存 | `issue_iter_for_each_void_stmtexpr.md` | ✅ v0.5.0 #64 解決 |
 | ラムダ引数型検査が浅い | `issue_iter_lambda_typecheck_shallow.md` | ⚠️ #63 未対応 |
 | `select_many` VarRef ラムダ時の所有権 | — | ⚠️ 将来の所有権機能で対応予定 |
 

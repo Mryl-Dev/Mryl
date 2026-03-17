@@ -1810,7 +1810,7 @@ println("{}", nums.count());                         // 5
 println("{}", nums.any((x: i32) => x > 4));          // true
 println("{}", nums.all((x: i32) => x > 0));          // true
 
-// for_each（副作用のみ、let に代入不可）
+// for_each（副作用専用・文としてのみ使用可。let/fix/代入/return に使用不可）
 nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 ```
 
@@ -1833,7 +1833,7 @@ nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 | `to_array()` | `T[]` | `ToArray` | 配列に変換 |
 | `aggregate(fn(T,T)->T)` | `Result<T, string>` | `Aggregate` | 初期値なし畳み込み |
 | `aggregate(init, fn(U,T)->U)` | `U` | `Aggregate` | 初期値あり畳み込み |
-| `for_each(fn(T)->void)` | `void` | `ForEach` | 副作用のみ（`let` 代入不可） |
+| `for_each(fn(T)->void)` | `void` | `ForEach` | 副作用専用・文としてのみ使用可（`let`/`fix`/代入/`return` 不可） |
 | `count()` | `i32` | `Count` | 要素数 |
 | `first()` | `Result<T, string>` | `First` | 先頭要素（空なら `Err`） |
 | `any(fn(T)->bool)` | `bool` | `Any` | 条件を満たす要素が存在するか |

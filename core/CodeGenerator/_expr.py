@@ -943,17 +943,21 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             )
 
         # ── for_each ─────────────────────────────────────────────
+        # GCC statement expression ({...}) を使わず通常ブロック {..} として返す。
+        # for_each は void 専用（TypeChecker が式コンテキストでの使用を禁止）なので
+        # 末尾の値式 (void)0; は不要。ExprStmt ハンドラ側で ; を付与しない。
         if method == 'for_each':
             lam_setup, lam_fn, lam_env = _lam_full(0)
+            # src_free は末尾に NL を持つため、ある場合はその前に for ループを置く
+            src_free_block = f"{NL}free({src_var}.data);" if src_is_temp else ""
             return (
-                f"{OPEN}"
+                f"{{{NL}"
                 f"{src_cap}"
                 f"{lam_setup}"
                 f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
-                f" {lam_fn}({src_ref}.data[{i_var}], {lam_env}); }}{NL}"
-                f"{src_free}"
-                f"(void)0;"
-                f"{CLOSE}"
+                f" {lam_fn}({src_ref}.data[{i_var}], {lam_env}); }}"
+                f"{src_free_block}"
+                f"\n{base_indent}}}"
             )
 
         # ── first ────────────────────────────────────────────────

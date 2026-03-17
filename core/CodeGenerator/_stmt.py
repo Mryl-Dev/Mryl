@@ -95,7 +95,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             self._generate_for(stmt)
         elif stmt_class == "ExprStmt":
             expr_code = self._generate_expr(stmt.expr)
-            self._emit(f"{self._strip_outer_parens(expr_code)};")
+            # for_each は void 専用のブロック文 {..} を返すため ; 不要
+            # （他の iter メソッドは値を返す statement expression ({..}) なので ; が必要）
+            if hasattr(stmt.expr, 'method') and stmt.expr.method == 'for_each':
+                self._emit(expr_code)
+            else:
+                self._emit(f"{self._strip_outer_parens(expr_code)};")
         elif stmt_class == "Assignment":
             target = self._generate_expr(stmt.target)
             value  = self._generate_expr(stmt.expr)
