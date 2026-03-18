@@ -320,48 +320,76 @@ class TypeCheckerCallMixin:
             """Iter<T> を表す TypeNode を生成する（内部表現は array_size=-1）。"""
             return TypeNode(t.name, type_args=t.type_args, array_size=-1)
 
-        def _fn_return_type(arg_expr) -> 'TypeNode':
-            """ラムダ / VarRef から戻り値型を推論する。フォールバックは elem_type。"""
-            from Ast import Lambda, VarRef
-            if isinstance(arg_expr, Lambda):
-                t = getattr(arg_expr, 'inferred_return_type', None)
-                if t is not None:
-                    return t if isinstance(t, TypeNode) else TypeNode(t)
-            elif isinstance(arg_expr, VarRef):
-                for scope in reversed(self.env):
-                    if arg_expr.name in scope:
-                        fn_t = scope[arg_expr.name]
-                        if isinstance(fn_t, TypeNode) and fn_t.name in ('fn', 'async_fn') and fn_t.type_args:
-                            raw = fn_t.type_args[-1]
-                            return raw if isinstance(raw, TypeNode) else TypeNode(raw)
-            # フォールバック: 要素型と同一
-            return elem_type
+        def _check_lambda_sig(arg_idx, expected_param=None, expected_ret=None):
+            """ラムダ/関数引数の fn 型を取得し、引数型・戻り値型を検査する。
+
+            check_expr を呼ぶことでラムダの inferred_return_type もセットされる。
+            expected_param: None → スキップ。TypeNode → elem_type と照合。
+            expected_ret:   None → スキップ。TypeNode → 戻り値型と照合。
+            戻り値: fn TypeNode（type_args = [param..., return_type]）
+            """
+            if arg_idx >= len(expr.args):
+                return None
+            arg_expr = expr.args[arg_idx]
+            fn_type = self.check_expr(arg_expr)
+
+            if not (isinstance(fn_type, TypeNode) and fn_type.name in ('fn', 'async_fn')):
+                raise TypeError_(f"'{method}': argument {arg_idx} must be a function", arg_expr)
+
+            type_args = fn_type.type_args or []
+            # type_args = [param0_type, ..., return_type]（最後が戻り値型）
+
+            # パラメータ型検査: 'any'（アノテーションなしラムダ）はスキップ
+            if expected_param is not None and len(type_args) >= 2:
+                actual_param = type_args[0]
+                if not self.types_equal(actual_param, expected_param):
+                    raise TypeError_(
+                        f"'{method}': lambda parameter type mismatch: "
+                        f"expected {expected_param}, got {actual_param}",
+                        arg_expr
+                    )
+
+            # 戻り値型検査
+            if expected_ret is not None and type_args:
+                actual_ret = type_args[-1]
+                if actual_ret.name != 'any' and not self.types_equal(actual_ret, expected_ret):
+                    raise TypeError_(
+                        f"'{method}': lambda return type mismatch: "
+                        f"expected {expected_ret}, got {actual_ret}",
+                        arg_expr
+                    )
+
+            return fn_type
 
         method = expr.method
 
         if method == 'select':
             # select(fn(T)->U) -> Iter<U>
-            u = _fn_return_type(expr.args[0]) if expr.args else elem_type
+            fn_type = _check_lambda_sig(0, expected_param=elem_type, expected_ret=None)
+            if fn_type and fn_type.type_args:
+                raw = fn_type.type_args[-1]
+                u = raw if isinstance(raw, TypeNode) else TypeNode(raw)
+            else:
+                u = elem_type
             return _iter(u)
 
         if method == 'filter':
             # filter(fn(T)->bool) -> Iter<T>
+            _check_lambda_sig(0, expected_param=elem_type, expected_ret=TypeNode('bool'))
             return _iter(elem_type)
 
         if method in ('take', 'skip'):
-            # take/skip(i32) -> Iter<T>
+            # take/skip(i32) -> Iter<T>: ラムダなし
             return _iter(elem_type)
 
         if method == 'select_many':
             # select_many(fn(T)->U[]) -> Iter<U>
-            # U を fn の戻り値の要素型から取得（配列型の name を使う）
-            # ラムダの inferred_return_type を CodeGenerator が読めるよう check_expr を明示的に呼ぶ
-            if expr.args:
-                try:
-                    self.check_expr(expr.args[0])
-                except Exception:
-                    pass
-            u = _fn_return_type(expr.args[0]) if expr.args else elem_type
+            fn_type = _check_lambda_sig(0, expected_param=elem_type, expected_ret=None)
+            if fn_type and fn_type.type_args:
+                raw = fn_type.type_args[-1]
+                u = raw if isinstance(raw, TypeNode) else TypeNode(raw)
+            else:
+                u = elem_type
             return _iter(u)
 
         if method == 'to_array':
@@ -370,14 +398,18 @@ class TypeCheckerCallMixin:
 
         if method == 'aggregate':
             if len(expr.args) == 1:
-                # 初期値なし: Result<T, string>
+                # 初期値なし: aggregate(fn(T,T)->T) -> Result<T, string>
+                _check_lambda_sig(0, expected_param=None, expected_ret=None)
                 return TypeNode('Result', type_args=[elem_type, TypeNode('string')])
             else:
-                # 初期値あり: 初期値の型 U を返す
+                # 初期値あり: aggregate(seed: U, fn(U,T)->U) -> U
                 u = self.check_expr(expr.args[0]) if expr.args else elem_type
+                _check_lambda_sig(1, expected_param=None, expected_ret=None)
                 return u
 
         if method == 'for_each':
+            # for_each(fn(T)->void) -> void: 戻り値型は強制しない（値が捨てられるため）
+            _check_lambda_sig(0, expected_param=elem_type, expected_ret=None)
             return TypeNode('void')
 
         if method == 'count':
@@ -387,6 +419,8 @@ class TypeCheckerCallMixin:
             return TypeNode('Result', type_args=[elem_type, TypeNode('string')])
 
         if method in ('any', 'all'):
+            # any/all(fn(T)->bool) -> bool
+            _check_lambda_sig(0, expected_param=elem_type, expected_ret=TypeNode('bool'))
             return TypeNode('bool')
 
         raise TypeError_(f"Unknown iter method '{method}'", expr)

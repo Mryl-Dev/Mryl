@@ -117,5 +117,6 @@ fn main() -> i32 {
     println("H2: {}", flat_h[0]);      // H2: 2
     println("H3: {}", flat_h[1]);      // H3: 11
 
+    println("=== OK ===");
     return 0;
 }

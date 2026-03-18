@@ -101,8 +101,10 @@ class TypeChecker(TypeCheckerStmtMixin, TypeCheckerExprMixin, TypeCheckerCallMix
         if a.name == "Option" and b.name == "Option":
             return True
 
-        # 配列型の比較
+        # 配列型の比較: 一方のみ配列型はスカラーと配列の不一致 → False
         if a.array_size is not None or b.array_size is not None:
+            if a.array_size is None or b.array_size is None:
+                return False
             a_dyn = (a.array_size == -1)
             b_dyn = (b.array_size == -1)
             if a.name != b.name:

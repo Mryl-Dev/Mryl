@@ -86,5 +86,6 @@ fn main() -> i32 {
     println("{}", r5);  // 110
     println("{}", r6);  // 15
 
+    println("=== OK ===");
     return 0;
 }
