@@ -471,8 +471,15 @@ class CodeGenerator(
         self.ident_renames       = {}
 
         if getattr(func, 'is_async', False) or self._body_has_await(func.body):
+            # async SM 内でも Ok/Err/Some の compound literal 生成が
+            # current_return_type を参照するため、ここで設定する (#51)
+            if func.return_type and func.return_type.name in ("Result", "Option", "fn"):
+                self.current_return_type = self._type_to_c(func.return_type)
+            else:
+                self.current_return_type = None
             func_insert_pos = len(self.code)
             self._generate_async_state_machine(func)
+            self.current_return_type = None
             self.env.pop()
             self.ident_renames = saved_renames
             self._emit_pending_lambdas_at(func_insert_pos)

@@ -30,7 +30,7 @@ fn is_even(x: i32) -> bool {
     return x % 2 == 0;
 }
 
-fn double(x: i32) -> i32 {
+fn double_val(x: i32) -> i32 {
     return x * 2;
 }
 
@@ -118,7 +118,7 @@ fn main() -> i32 {
     println("K1: {}", fk_filter.len());  // K1: 3
     println("K2: {}", fk_filter[0]);     // K2: 2
 
-    let fk_select: i32[] = nums.select(double).to_array();
+    let fk_select: i32[] = nums.select(double_val).to_array();
     println("K3: {}", fk_select.len());  // K3: 6
     println("K4: {}", fk_select[0]);     // K4: 2
 
