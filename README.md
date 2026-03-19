@@ -818,6 +818,34 @@ fn main() {
 }
 ```
 
+### async fn と Result\<T,E\>
+
+`async fn` の戻り値型に `Result<T,E>` を指定できます。
+`Err(...)` を返した場合、タスク状態は `MRYL_TASK_FAULTED` に遷移します。
+`await` 側は `COMPLETED` と `FAULTED` の両方を完了として扱い、`Result` 値をそのまま取得できます。
+
+```mryl
+async fn fetch(url: string) -> Result<string, string> {
+    if (url == "") {
+        return Err("empty url");
+    }
+    return Ok("data received");
+}
+
+fn main() {
+    let r: Result<string, string> = await fetch("");
+    match r {
+        Ok(v)  => println("ok: {}", v),
+        Err(e) => println("err: {}", e),   // "err: empty url"
+    };
+}
+```
+
+> **FAULTED 状態**: `Err(...)` を返す `async fn` は `MRYL_TASK_FAULTED` をセットして終了します。
+> `await` の停止条件は `COMPLETED || FAULTED` であるため、エラーも含めて正しく待機・取得できます。
+
+---
+
 ### アーキテクチャ概要
 
 Mryl の async/await は **C# 風の状態機械 + シングルスレッドスケジューラ** で実装されています。
@@ -847,7 +875,7 @@ pthreads は使用しません。
 typedef struct MrylTask {
     int           strong_count;  // 強参照カウント（共有所有権）
     int           weak_count;    // 弱参照カウント（キャンセルトークン用）
-    MrylTaskState state;         // PENDING / RUNNING / COMPLETED / CANCELLED / FAULTED
+    MrylTaskState state;         // PENDING / RUNNING / COMPLETED / CANCELLED / FAULTED(Err返却時)
     void*         result;        // 戻り値（ヒープ確保）
     void        (*move_next)(struct MrylTask*);  // 状態遷移関数ポインタ
     void        (*on_cancel)(struct MrylTask*);  // キャンセル時コールバック
@@ -937,6 +965,7 @@ awaiter が存在すれば自動的に再スケジュールされます。
 | スケジューラ | シングルスレッド循環バッファ（cap=65536）|
 | 戻り値受け渡し | `MrylTask*.result`（`void*`、ヒープ確保）|
 | 参照カウント | `strong_count` + `weak_count`（shared/weak_ptr 相当）|
+| `Result<T,E>` 返し | `Err(...)` 返却時に `MRYL_TASK_FAULTED`、`await` は COMPLETED/FAULTED 両方で停止 |
 | キャンセル | `__task_cancel()` + `on_cancel` コールバック |
 | `#include` | `<pthread.h>` 不要、`-lpthread` リンク不要 |
 | Python モード | `asyncio.create_task()` + `loop.run_until_complete()` |
@@ -1919,6 +1948,9 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_33_select_many.ml](../tests/test_33_select_many.ml) | `select_many` C コード生成（#65、C0/C1/MC/DC） | ✅ Python + C + Native |
 | [tests/test_34_closure_capture.ml](../tests/test_34_closure_capture.ml) | クロージャキャプチャ fat pointer 実装（#44、C0/C1/MC/DC） | ✅ Python + C + Native |
 | [tests/test_35_box_free.ml](../tests/test_35_box_free.ml) | `Box<T>` 自動 free（スコープ・return・ループ・多重・`Vec<Box<T>>`、#66） | ✅ Python + C + Native |
+| [tests/test_36_for_each_void_stmt.ml](../tests/test_36_for_each_void_stmt.ml) | `for_each` void 文式・キャプチャあり fat pointer ラムダ（#64） | ✅ Python + C + Native |
+| [tests/test_37_iter_lambda_typecheck.ml](../tests/test_37_iter_lambda_typecheck.ml) | `Iter<T>` メソッドへのラムダ引数型検査（#63、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_38_async_result.ml](../tests/test_38_async_result.ml) | `async fn` + `Result<T,E>` FAULTED 状態伝播（#51） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

@@ -1035,9 +1035,38 @@ fn main() {
 }
 ```
 
+### async fn と Result\<T,E\>
+
+`async fn` の戻り値に `Result<T,E>` を指定できます。
+
+| 返値 | タスク状態 |
+|------|-----------|
+| `Ok(v)` | `MRYL_TASK_COMPLETED` |
+| `Err(e)` | `MRYL_TASK_FAULTED` |
+
+`await` の停止条件は `state == COMPLETED || state == FAULTED` です。
+どちらの場合も `MrylTask*.result` に `Result` 値がヒープ確保され、呼び出し元で `match` により取得できます。
+
+```mryl
+async fn fetch(url: string) -> Result<string, string> {
+    if (url == "") {
+        return Err("empty url");
+    }
+    return Ok("data received");
+}
+
+fn main() {
+    let r: Result<string, string> = await fetch("");
+    match r {
+        Ok(v)  => println("ok: {}", v),
+        Err(e) => println("err: {}", e),   // "err: empty url"
+    };
+}
+```
+
 ### アーキテクチャ
 
-Mryl の async/await は **C# 風の状態機械 + シングルスレッドスケジューラ** で実装されます。  
+Mryl の async/await は **C# 風の状態機械 + シングルスレッドスケジューラ** で実装されます。
 pthreads、OS スレッド、外部ライブラリは不要です。
 
 ```
@@ -1050,17 +1079,17 @@ await     →  awaiter 設定 + 中断点記録 + 再 POST で再開
 
 ```c
 typedef enum {
-    MRYL_TASK_PENDING,
-    MRYL_TASK_RUNNING,
-    MRYL_TASK_COMPLETED,
-    MRYL_TASK_CANCELLED,
-    MRYL_TASK_FAULTED
+    MRYL_TASK_PENDING,    // 未開始
+    MRYL_TASK_RUNNING,    // 実行中
+    MRYL_TASK_COMPLETED,  // 正常完了（Ok 含む）
+    MRYL_TASK_CANCELLED,  // キャンセル済み
+    MRYL_TASK_FAULTED     // エラー完了（async fn が Err を返した場合）
 } MrylTaskState;
 
 typedef struct MrylTask {
     int           strong_count;  // 強参照カウント（所有権）
     int           weak_count;    // 弱参照カウント（キャンセルトークン）
-    MrylTaskState state;
+    MrylTaskState state;         // PENDING / RUNNING / COMPLETED / CANCELLED / FAULTED(Err返却時)
     void*         result;        // 戻り値（ヒープ確保 void*）
     void        (*move_next)(struct MrylTask*);
     void        (*on_cancel)(struct MrylTask*);
