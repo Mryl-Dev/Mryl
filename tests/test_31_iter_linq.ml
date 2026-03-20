@@ -10,7 +10,7 @@
 //   H. aggregate 初期値なし（合計）
 //   I. aggregate 初期値あり
 //   J. for_each 副作用確認
-//   K. select_many は C コード生成 defer のためスキップ（issue_iter_select_many_codegen.md）
+//   K. select_many（#65 v0.5.0 実装）
 //   L. filter: 全要素通過 / 全要素除外（C1 境界値）
 //   M. take(0) / take(n>len) 境界値
 //   N. aggregate 空配列 → Err
@@ -123,8 +123,15 @@ fn main() -> i32 {
     // J: 20
     // J: 30
 
-    // NOTE: K. select_many は C コード生成が v0.5.0 defer のため除外
-    //       issue_iter_select_many_codegen.md 参照
+    // ----------------------------------------------------------
+    // K. select_many（#65 v0.5.0 実装）
+    // ----------------------------------------------------------
+    let sm_src: i32[] = [1, 2, 3];
+    let sm_flat: i32[] = sm_src.select_many((x: i32) => [x, x * 10]).to_array();
+    println("K1: {}", sm_flat.len());  // K1: 6
+    println("K2: {}", sm_flat[0]);     // K2: 1
+    println("K3: {}", sm_flat[1]);     // K3: 10
+    println("K4: {}", sm_flat[5]);     // K4: 30
 
     // ----------------------------------------------------------
     // L. C1: filter 全要素通過 / 全要素除外

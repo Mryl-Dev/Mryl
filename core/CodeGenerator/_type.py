@@ -30,7 +30,7 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
 
         if type_node.name == "Box":
             # ユーザー定義 struct Box がある場合は通常の base_type として処理する
-            if not any(s.name == "Box" for s in self.structs):
+            if not self.has_user_box:
                 if type_node.type_args:
                     arg = type_node.type_args[0]
                     inner_c = self._type_to_c(arg if hasattr(arg, 'name') else TypeNode(arg))
@@ -63,7 +63,21 @@ class CodeGeneratorTypeMixin(_CodeGeneratorBase):
             return "MrylOption_int32_t"
 
         if type_node.name == "fn":
+            # fn(T...)->U を fat pointer struct に変換: MrylFn_{arg_part}_ret_{ret_part}
+            if getattr(type_node, 'type_args', None):
+                ret_c    = self._type_to_c(type_node.type_args[-1])
+                arg_cs   = tuple(self._type_to_c(t) for t in type_node.type_args[:-1])
+                arg_part = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs) if arg_cs else "void"
+                ret_part = ret_c.replace("*", "Ptr").replace(" ", "_")
+                struct_name = f"MrylFn_{arg_part}_ret_{ret_part}"
+                self.fn_type_registry.add((arg_cs, ret_c, struct_name))
+                return struct_name
             return "void*"
+
+        # 動的配列 (array_size == -1) → MrylVec_<T> として扱う
+        # 静的配列 (array_size > 0) → C の配列型 base_type[N] として扱う
+        if type_node.array_size == -1:
+            return f"MrylVec_{type_name}"
 
         if type_node.array_size:
             return f"{base_type}[{type_node.array_size}]"

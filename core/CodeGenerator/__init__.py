@@ -84,6 +84,12 @@ class CodeGenerator(
         self.sm_await_handles            = {}    # await_index -> handle_field_name
         self.capture_map                 = {}    # {var_name: c_expr}
         self.closure_env_types           = {}    # {var_name: lambda_name}
+        self.lambda_captures             = {}    # {lam_name: captures_dict}
+        self.fn_type_registry            = set() # set of (param_c_tuple, ret_c, struct_name)
+        self.fn_var_c_types              = {}    # {var_name: MrylFn_* 型名}（キャプチャ型解決用）
+        self.thunk_counter               = 0     # static fn ref サンク連番カウンタ
+        self.local_closure_envs          = []    # heap alloc した env ポインタ名（関数末尾で free）
+        self.closure_var_env_ptrs        = {}    # {var_name: env_ptr_name}
         self.result_type_registry        = set() # set of (ok_c, err_c, struct_name)
         self.option_type_registry        = set() # set of (inner_c, struct_name)
         self.uses_str_find               = False # mryl_str_find 使用フラグ
@@ -91,6 +97,10 @@ class CodeGenerator(
         self.current_return_type         = None  # 現在処理中の関数の戻り値型
         self.enums                       = {}    # name -> EnumDecl
         self.ident_renames               = {}    # Mryl変数名 → C 安全変数名
+        self.has_user_box                = False # ユーザー定義 struct Box があるかキャッシュ
+        self.local_box_vars              = []    # [(c_var_name, type_node)] Box 変数（宣言順）
+        self.box_inner_moved             = set() # 内部ポインタが別変数に移動済みの c_var_name 集合
+        self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)] Vec<Box<T>> 変数
 
     # ------------------------------------------------------------------
     # メインエントリポイント
@@ -99,6 +109,7 @@ class CodeGenerator(
         """プログラム AST を受け取り、C ソースコード文字列を返す """
         self.code                        = []
         self.structs                     = program.structs
+        self.has_user_box                = any(s.name == "Box" for s in program.structs)
         self.lambda_counter              = 0
         self.pending_lambdas             = []
         self.pending_async_lambda_blocks = []
@@ -110,11 +121,20 @@ class CodeGenerator(
         self.const_table                 = {}
         self.capture_map                 = {}
         self.closure_env_types           = {}
+        self.lambda_captures             = {}    # {lam_name: {'captures': dict, 'ret_c': str, 'arg_cs': list}}
+        self.fn_type_registry            = set() # set of (arg_cs_tuple, ret_c, struct_name)
+        self.fn_var_c_types              = {}    # {var_name: MrylFn_* 型名}（キャプチャ型解決用）
+        self.thunk_counter               = 0     # static fn ref サンク連番カウンタ
+        self.local_closure_envs          = []    # heap alloc した env ポインタ名（関数末尾で free）
+        self.closure_var_env_ptrs        = {}    # {var_name: env_ptr_name}
         self.result_type_registry        = set()
         self.option_type_registry        = set()
         self.uses_str_find               = False
         self.uses_str_split              = False
         self.ident_renames               = {}
+        self.local_box_vars              = []    # [(c_var_name, type_node)]
+        self.box_inner_moved             = set() # 内部ポインタ移動済みの c_var_name 集合
+        self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)]
 
         # 全関数をキャッシュ
         self.program_functions = {func.name: func for func in program.functions}
@@ -141,6 +161,8 @@ class CodeGenerator(
         self._emit("// __RESULT_TYPEDEFS_PLACEHOLDER__")
         # Option<T> typedef プレースホルダー
         self._emit("// __OPTION_TYPEDEFS_PLACEHOLDER__")
+        # fn 型 fat pointer typedef プレースホルダー
+        self._emit("// __FN_TYPEDEFS_PLACEHOLDER__")
 
         # enum の C 定義を出力
         self.enums = {e.name: e for e in program.enums}
@@ -239,23 +261,26 @@ class CodeGenerator(
                     for cap_name, cap_c_type in captures.items():
                         lambda_lines.append(f"    {cap_c_type} {cap_name};")
                     lambda_lines.append(f"}} {env_struct};")
-                    lambda_lines.append(
-                        f"typedef struct {{ {ret_type} (*fn)({params_str}, {env_struct}*); "
-                        f"{env_struct} env; }} {lam_name}_closure_t;"
-                    )
+                    # fat pointer 規約: void* __e を最終引数、body 先頭でキャスト
                     full_params = (
-                        f"{params_str}, {env_struct}* __env" if params_str else f"{env_struct}* __env"
+                        f"{params_str}, void* __e" if params_str else "void* __e"
                     )
                     lambda_lines.append(f"static {ret_type} {lam_name}({full_params}) {{")
+                    lambda_lines.append(f"    {env_struct}* __env = ({env_struct}*)__e;")
                 else:
-                    lambda_lines.append(f"static {ret_type} {lam_name}({params_str}) {{")
+                    # キャプチャなし: uniform convention のため void* __e を付与
+                    full_params = (
+                        f"{params_str}, void* __e" if params_str else "void* __e"
+                    )
+                    lambda_lines.append(f"static {ret_type} {lam_name}({full_params}) {{")
                 lambda_lines.extend(body_lines)
                 lambda_lines.append("}")
                 lambda_lines.append("")
             self.pending_lambdas = []
 
+            # MrylFn_* / MrylResult_* / static ... と多様なため前方検索を柔軟にする
             func_pattern = re.compile(
-                r'^(?:int|void|int32_t|int64_t|float|double|uint\w+|MrylString)\s+\w+\s*\('
+                r'^(?:int|void|int32_t|int64_t|float|double|uint\w+|MrylString|MrylFn_\w+)\s+\w+\s*\('
             )
             insert_at = len(self.code)
             for i, line in enumerate(self.code):
@@ -281,6 +306,21 @@ class CodeGenerator(
                     break
         else:
             self.code = [l for l in self.code if "// __RESULT_TYPEDEFS_PLACEHOLDER__" not in l]
+
+        # fn 型 fat pointer typedef を差し込む
+        if self.fn_type_registry:
+            fn_lines = ["// ===== fn type fat pointers ====="]
+            for (arg_cs, ret_c, struct_name) in sorted(self.fn_type_registry, key=lambda x: x[2]):
+                args_with_env = list(arg_cs) + ["void*"]
+                fn_ptr = f"{ret_c} (*fn)({', '.join(args_with_env)})"
+                fn_lines.append(f"typedef struct {{ {fn_ptr}; void* env; }} {struct_name};")
+            fn_lines.append("")
+            for i, line in enumerate(self.code):
+                if "// __FN_TYPEDEFS_PLACEHOLDER__" in line:
+                    self.code[i:i + 1] = fn_lines
+                    break
+        else:
+            self.code = [l for l in self.code if "// __FN_TYPEDEFS_PLACEHOLDER__" not in l]
 
         # Option<T> typedef を差し込む
         if self.option_type_registry:
@@ -373,16 +413,18 @@ class CodeGenerator(
                 for cap_name, cap_c_type in captures.items():
                     lambda_lines.append(f"    {cap_c_type} {cap_name};")
                 lambda_lines.append(f"}} {env_struct};")
-                lambda_lines.append(
-                    f"typedef struct {{ {ret_type} (*fn)({params_str}, {env_struct}*); "
-                    f"{env_struct} env; }} {lam_name}_closure_t;"
-                )
+                # fat pointer 規約: void* __e を最終引数、body 先頭でキャスト
                 full_params = (
-                    f"{params_str}, {env_struct}* __env" if params_str else f"{env_struct}* __env"
+                    f"{params_str}, void* __e" if params_str else "void* __e"
                 )
                 lambda_lines.append(f"static {ret_type} {lam_name}({full_params}) {{")
+                lambda_lines.append(f"    {env_struct}* __env = ({env_struct}*)__e;")
             else:
-                lambda_lines.append(f"static {ret_type} {lam_name}({params_str}) {{")
+                # キャプチャなし: uniform convention のため void* __e を付与
+                full_params = (
+                    f"{params_str}, void* __e" if params_str else "void* __e"
+                )
+                lambda_lines.append(f"static {ret_type} {lam_name}({full_params}) {{")
             lambda_lines.extend(body_lines)
             lambda_lines.append("}")
             lambda_lines.append("")
@@ -394,8 +436,11 @@ class CodeGenerator(
     # 関数・メソッド生成
     # ------------------------------------------------------------------
     def _fn_param_decl(self, param_name: str, type_node, is_fix: bool = False) -> str:
-        """パラメータの C 宣言文字列を返す。fn(T)->V は関数ポインタ構文に変換する。"""
-        if type_node and type_node.name in ("fn", "async_fn") and getattr(type_node, 'type_args', None):
+        """パラメータの C 宣言文字列を返す。
+        async_fn は関数ポインタ構文、fn 型は MrylFn_* struct（_type_to_c に委譲）。
+        """
+        # async_fn のみ関数ポインタ構文を維持
+        if type_node and type_node.name == "async_fn" and getattr(type_node, 'type_args', None):
             ret_t  = self._type_to_c(type_node.type_args[-1])
             arg_cs = ", ".join(self._type_to_c(t) for t in type_node.type_args[:-1]) or "void"
             return f"{ret_t} (*{param_name})({arg_cs})"
@@ -416,13 +461,25 @@ class CodeGenerator(
 
         self.env.append({})
         self.local_string_vars   = []
+        self.local_closure_envs  = []
+        self.closure_var_env_ptrs = {}
+        self.local_box_vars      = []    # Box 変数追跡（関数スコープ）
+        self.box_inner_moved     = set() # 内部ポインタ移動済み集合（関数スコープ）
+        self.local_box_vec_vars  = []    # Vec<Box<T>> 変数追跡（関数スコープ）
         self.temp_string_counter = 0
         saved_renames            = self.ident_renames.copy()
         self.ident_renames       = {}
 
         if getattr(func, 'is_async', False) or self._body_has_await(func.body):
+            # async SM 内でも Ok/Err/Some の compound literal 生成が
+            # current_return_type を参照するため、ここで設定する (#51)
+            if func.return_type and func.return_type.name in ("Result", "Option", "fn"):
+                self.current_return_type = self._type_to_c(func.return_type)
+            else:
+                self.current_return_type = None
             func_insert_pos = len(self.code)
             self._generate_async_state_machine(func)
+            self.current_return_type = None
             self.env.pop()
             self.ident_renames = saved_renames
             self._emit_pending_lambdas_at(func_insert_pos)
@@ -441,6 +498,9 @@ class CodeGenerator(
             if func.return_type and func.return_type.name == "Result":
                 self.current_return_type = return_type
             elif func.return_type and func.return_type.name == "Option":
+                self.current_return_type = return_type
+            elif func.return_type and func.return_type.name == "fn":
+                # fn 型を返す関数: _generate_return の Lambda 処理で参照する
                 self.current_return_type = return_type
             else:
                 self.current_return_type = None
@@ -466,6 +526,15 @@ class CodeGenerator(
         if not has_return:
             for var_name in self.local_string_vars:
                 self._emit(f"free_mryl_string({var_name});")
+            # heap alloc した closure env を解放（返値にならなかったもの）
+            for env_ptr in self.local_closure_envs:
+                self._emit(f"free({env_ptr});")
+            # Box 変数を宣言の逆順で解放（多重 Box は深い方から順に free）
+            for (vn, tn) in reversed(self.local_box_vars):
+                self._emit_box_free(vn, tn)
+            # Vec<Box<T>> 変数: 要素を先に free してから .data を free
+            for (vn, _inner_tn) in reversed(self.local_box_vec_vars):
+                self._emit_box_vec_free(vn)
 
         if not has_return:
             if func.name == "main":
@@ -534,10 +603,17 @@ class CodeGenerator(
         self.indent_level += 1
 
         # _generate_return 内の cleanup が参照するためメソッド開始時に初期化する
+        # Box 系も同様にリセットしないと前のメソッドの状態が漏れる（CRITICAL）
         saved_str_vars           = getattr(self, 'local_string_vars', [])
         saved_temp_ctr           = getattr(self, 'temp_string_counter', 0)
+        saved_box_vars           = self.local_box_vars
+        saved_box_inner          = self.box_inner_moved
+        saved_box_vec_vars       = self.local_box_vec_vars
         self.local_string_vars   = []
         self.temp_string_counter = 0
+        self.local_box_vars      = []
+        self.box_inner_moved     = set()
+        self.local_box_vec_vars  = []
 
         # env に self と引数を登録（_infer_expr_type が struct フィールド型を解決できるようにする）
         method_env: dict = {}
@@ -564,10 +640,17 @@ class CodeGenerator(
         if not has_return:
             for var_name in self.local_string_vars:
                 self._emit(f"free_mryl_string({var_name});")
+            for (vn, tn) in reversed(self.local_box_vars):
+                self._emit_box_free(vn, tn)
+            for (vn, _tn) in reversed(self.local_box_vec_vars):
+                self._emit_box_vec_free(vn)
 
         # 復元
         self.local_string_vars   = saved_str_vars
         self.temp_string_counter = saved_temp_ctr
+        self.local_box_vars      = saved_box_vars
+        self.box_inner_moved     = saved_box_inner
+        self.local_box_vec_vars  = saved_box_vec_vars
 
         self.indent_level -= 1
         self._emit("}")

@@ -93,8 +93,7 @@ class CodeGeneratorStructMixin(_CodeGeneratorBase):
 
         # Box::new(v) → GCC statement expression: ({T* __p = malloc(sizeof(T)); *__p = v; __p;})
         # ユーザー定義 struct Box がある場合は通常の static fn として処理する
-        _user_box = any(s.name == "Box" for s in self.structs)
-        if type_name == "Box" and member_name == "new" and expr.args and not _user_box:
+        if type_name == "Box" and member_name == "new" and expr.args and not self.has_user_box:
             arg_str      = self._generate_expr(expr.args[0])
             inner_type   = self._infer_expr_type(expr.args[0])
             c_inner_type = self._type_to_c_base(inner_type)

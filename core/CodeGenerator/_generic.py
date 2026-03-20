@@ -202,8 +202,21 @@ class CodeGeneratorGenericMixin(_CodeGeneratorBase):
                 prefix = "vec_" if obj_t.startswith("vec_") else "MrylVec_"
                 elem_c = obj_t[len(prefix):]
                 m = expr.method
-                if m in ('select', 'filter', 'take', 'skip', 'select_many', 'to_array'):
+                if m in ('select', 'filter', 'take', 'skip', 'to_array'):
                     return f"vec_{elem_c}"   # Iter<T> / T[] は vec_T で表す
+                if m == 'select_many':
+                    # select_many(fn(T)->U[]) -> Iter<U>
+                    # Lambda の inferred_return_type から U を取得して vec_U を返す。
+                    # elem_c が "vec_U" 形式（外側配列の要素型）の場合は elem_c をそのまま返す。
+                    if expr.args:
+                        from Ast import Lambda
+                        lam_arg = expr.args[0]
+                        if isinstance(lam_arg, Lambda):
+                            inferred = getattr(lam_arg, 'inferred_return_type', None)
+                            if inferred is not None:
+                                return f"vec_{inferred.name}"
+                    # フォールバック: elem_c が "vec_U" なら U の vec (flatten 1段)
+                    return elem_c if elem_c.startswith("vec_") else f"vec_{elem_c}"
                 if m == 'count':
                     return "i32"
                 if m in ('any', 'all'):

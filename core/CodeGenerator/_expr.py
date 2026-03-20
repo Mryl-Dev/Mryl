@@ -113,6 +113,18 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         if expr_class == "Lambda":
             return self._generate_lambda(expr)
 
+        if expr_class == "ArrayLiteral":
+            # 動的配列リテラルを式として生成する。
+            # LetDecl 以外（ラムダの return 式など）で配列リテラルが使われた場合に対応。
+            # mryl_vec_{et}_from((ct[]){elems...}, n) として新規 MrylVec を返す。
+            if not expr.elements:
+                return "/* empty array literal */"
+            elem_t  = self._infer_expr_type(expr.elements[0])
+            ct      = self._type_to_c_base(elem_t)
+            elems_c = ", ".join(f"({ct}){self._generate_expr(e)}" for e in expr.elements)
+            n       = len(expr.elements)
+            return f"mryl_vec_{elem_t}_from(({ct}[]){{{elems_c}}}, {n})"
+
         if expr_class == "AwaitExpr":
             return "/* await - use let statement for typed await */"
 
@@ -134,6 +146,9 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             for scope in reversed(self.env):
                 if expr.name in scope and scope[expr.name] in ('fn', 'fn_closure'):
                     return self._generate_function_call(expr)
+            # Lambda 引数を含む場合は fat pointer 変換が必要なので _generate_function_call に委譲（issue ②）
+            if any(arg.__class__.__name__ == "Lambda" for arg in expr.args):
+                return self._generate_function_call(expr)
             # Ok/Err/Some は compound literal 生成が必要なので _generate_function_call に委譲
             if expr.name in ("Ok", "Err", "Some"):
                 return self._generate_function_call(expr)
@@ -193,14 +208,11 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 factory = self.async_lambda_factories.get(expr.name, expr.name)
                 args    = ", ".join(self._generate_expr(arg) for arg in expr.args)
                 return f"{factory}({args})"
-            if expr.name in scope and scope[expr.name] == "fn":
-                c_name = self.ident_renames.get(expr.name, _safe_c_name(expr.name))
-                args   = ", ".join(self._generate_expr(arg) for arg in expr.args)
-                return f"{c_name}({args})"
-            if expr.name in scope and scope[expr.name] == "fn_closure":
+            if expr.name in scope and scope[expr.name] in ("fn", "fn_closure"):
+                # fat pointer 規約で統一: c_name.fn(args, c_name.env)
                 c_name   = self.ident_renames.get(expr.name, _safe_c_name(expr.name))
                 args     = ", ".join(self._generate_expr(arg) for arg in expr.args)
-                all_args = f"{args}, &{c_name}.env" if args else f"&{c_name}.env"
+                all_args = f"{args}, {c_name}.env" if args else f"{c_name}.env"
                 return f"{c_name}.fn({all_args})"
 
         func = self.program_functions.get(expr.name)
@@ -220,6 +232,36 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             if arg_type == "bool":
                 arg_code = self._generate_expr(expr.args[0])
                 return f"_mryl_to_string_bool({arg_code})"
+
+        # Lambda 引数を fat pointer struct に変換（issue ②⑧: ブロックスコープ変数でアドレス確保）
+        has_lambda_arg = any(arg.__class__.__name__ == "Lambda" for arg in expr.args)
+        if has_lambda_arg:
+            args_list = []
+            for i, arg in enumerate(expr.args):
+                if arg.__class__.__name__ == "Lambda":
+                    lam_name_v = self._generate_lambda(arg)
+                    info       = self.lambda_captures.get(lam_name_v, {})
+                    caps       = info.get('captures', {})
+                    ret_c_v    = info.get('ret_c', 'int32_t')
+                    arg_cs_v   = info.get('arg_cs', [])
+                    arg_part   = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs_v) if arg_cs_v else "void"
+                    ret_part   = ret_c_v.replace("*", "Ptr").replace(" ", "_")
+                    fn_c_type  = f"MrylFn_{arg_part}_ret_{ret_part}"
+                    self.fn_type_registry.add((tuple(arg_cs_v), ret_c_v, fn_c_type))
+                    if caps:
+                        env_struct = f"{lam_name_v}_env_t"
+                        env_var    = f"__lam_e_{lam_name_v}"
+                        fields     = ", ".join(
+                            f".{n} = {self.ident_renames.get(n, _safe_c_name(n))}" for n in caps
+                        )
+                        # ⑧ ブロックスコープのローカル変数として emit（stmt expr より安全）
+                        self._emit(f"{env_struct} {env_var} = {{{fields}}};")
+                        args_list.append(f"({fn_c_type}){{{lam_name_v}, &{env_var}}}")
+                    else:
+                        args_list.append(f"({fn_c_type}){{{lam_name_v}, NULL}}")
+                else:
+                    args_list.append(self._generate_expr(arg))
+            return f"{expr.name}({', '.join(args_list)})"
 
         args = ", ".join(self._generate_expr(arg) for arg in expr.args)
         return f"{expr.name}({args})"
@@ -583,7 +625,10 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                                  'select_many', 'to_array',
                                  'aggregate', 'for_each',
                                  'count', 'first', 'any', 'all'):
-                return self._generate_iter_method(expr, et, obj_name)
+                # レシーバが MethodCall（中間 iter 結果）のとき src_is_temp=True とし、
+                # _generate_iter_method 内でソースを1回評価してキャプチャ・free する。
+                src_is_temp = expr.obj.__class__.__name__ == 'MethodCall'
+                return self._generate_iter_method(expr, et, obj_name, src_is_temp)
 
         # Result<T,E> のメソッド
         obj_type = self._infer_expr_type(expr.obj)
@@ -659,13 +704,17 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         all_args    = [f"&{obj}"] + args_list   # Bug#28: ポインタ渡し
         return f"{struct_name}_{expr.method}({', '.join(all_args)})"
 
-    def _generate_iter_method(self, expr, et: str, obj_c: str) -> str:
+    def _generate_iter_method(
+        self, expr, et: str, obj_c: str, src_is_temp: bool = False
+    ) -> str:
         """Iter<T> / LINQ メソッドの C statement expression を生成する。
 
         Args:
-            expr   : MethodCall ノード
-            et     : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
-            obj_c  : レシーバの C 式文字列
+            expr        : MethodCall ノード
+            et          : レシーバ要素の Mryl 型名 (e.g. "i32", "string")
+            obj_c       : レシーバの C 式文字列
+            src_is_temp : True のとき obj_c は MethodCall 由来の中間 MrylVec。
+                          ソースをローカル変数にキャプチャし、使用後 free する。
         """
         from Ast import Lambda
 
@@ -675,16 +724,88 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         ct     = self._type_to_c_base(et)    # Mryl 型 → C 型 (e.g. "int32_t")
         i_var  = f"__i_{idx}"
 
-        def _lam(arg_idx: int) -> str:
-            """引数 arg_idx のラムダ / 関数参照を C 関数名として返す。"""
+        # ── 中間ソース管理（#62 メモリリーク修正） ────────────────
+        # src_is_temp=True のとき:
+        #   obj_c を1回だけ評価してローカル変数に代入し、使用後に data を free する。
+        # src_is_temp=False のとき:
+        #   ユーザー変数を指しているため free しない。
+        src_var  = f"__src_{idx}"
+        src_ref  = src_var if src_is_temp else obj_c
+
+        # ── 生成 C コード用インデント ────────────────────────────
+        # statement expression 内の各文を読みやすいよう改行＋インデントを付ける。
+        # base_indent: 呼び出し元のインデント（statement expression の開閉括弧位置）
+        # NL         : statement expression 内の文区切り（改行＋1段深いインデント）
+        base_indent = "    " * self.indent_level
+        NL          = "\n" + "    " * (self.indent_level + 1)
+
+        # src_cap / src_free もそれぞれ1文として改行を付ける
+        src_cap  = f"MrylVec_{et} {src_var} = {obj_c};{NL}" if src_is_temp else ""
+        src_free = f"free({src_var}.data);{NL}" if src_is_temp else ""
+
+        # statement expression の開閉テンプレート
+        OPEN  = f"({{{NL}"
+        CLOSE = f"\n{base_indent}}})"
+
+        def _lam_full(arg_idx: int) -> tuple:
+            """(env_setup, fn_expr, env_arg) を返す。fat pointer 規約対応。
+            env_setup: ループ前に emit すべき env 初期化コード（"" or "TYPE var = {...};{NL}"）
+            fn_expr:   呼び出す C 関数式（lam_name or c_name.fn）
+            env_arg:   env 引数の C 式（"&var", "c_name.env", "NULL"）
+            """
             arg = expr.args[arg_idx]
             if isinstance(arg, Lambda):
-                return self._generate_lambda(arg)
-            return self._generate_expr(arg)
+                lam_name_v = self._generate_lambda(arg)
+                info       = self.lambda_captures.get(lam_name_v, {})
+                captures   = info.get('captures', {})
+                if captures:
+                    env_struct = f"{lam_name_v}_env_t"
+                    env_var    = f"__lam_env_{idx}_{arg_idx}"
+                    fields     = ", ".join(
+                        f".{n} = {self.ident_renames.get(n, _safe_c_name(n))}" for n in captures
+                    )
+                    env_setup  = f"{env_struct} {env_var} = {{{fields}}};{NL}"
+                    env_arg    = f"&{env_var}"
+                else:
+                    env_setup = ""
+                    env_arg   = "NULL"
+                return env_setup, lam_name_v, env_arg
+            else:
+                # 変数参照: fn/fn_closure なら fat pointer から取得
+                var_type = None
+                if hasattr(arg, 'name'):
+                    for scope in reversed(self.env):
+                        if arg.name in scope:
+                            var_type = scope[arg.name]
+                            break
+                if var_type in ('fn', 'fn_closure'):
+                    c_name = self.ident_renames.get(arg.name, _safe_c_name(arg.name))
+                    return "", f"{c_name}.fn", f"{c_name}.env"
+                # 関数参照（issue ③）: thunk を自動生成して void* __e に対応
+                c_expr   = self._generate_expr(arg)
+                fn_decl  = self.program_functions.get(getattr(arg, 'name', ''))
+                if fn_decl:
+                    thunk_name = f"__thunk_{self.thunk_counter}"
+                    self.thunk_counter += 1
+                    t_params_c  = [
+                        f"{self._type_to_c(p.type_node) if p.type_node else 'int32_t'} {p.name}"
+                        for p in fn_decl.params
+                    ]
+                    t_params_str = ", ".join(t_params_c)
+                    t_ret        = self._type_to_c(fn_decl.return_type) if fn_decl.return_type else "void"
+                    call_args    = ", ".join(p.name for p in fn_decl.params)
+                    ret_kw       = "return " if t_ret != "void" else ""
+                    thunk_body   = [f"    {ret_kw}{fn_decl.name}({call_args});"]
+                    self.pending_lambdas.append((thunk_name, t_ret, t_params_str, thunk_body, {}))
+                    arg_cs_t = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in fn_decl.params]
+                    self.lambda_captures[thunk_name] = {'captures': {}, 'ret_c': t_ret, 'arg_cs': arg_cs_t}
+                    return "", thunk_name, "NULL"
+                # fallback: env 引数なし（コンパイル警告が出る可能性あり）
+                return "", c_expr, "NULL"
 
         # ── select ──────────────────────────────────────────────
         if method == 'select':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             # 出力型推論: Lambda の inferred_return_type か fallback で et
             lam_arg = expr.args[0]
             if isinstance(lam_arg, Lambda):
@@ -695,84 +816,148 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             out_ct = self._type_to_c_base(out_et)
             r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{out_et} {r} = mryl_vec_{out_et}_new(); "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"mryl_vec_{out_et}_push(&{r}, {lam}({obj_c}.data[{i_var}])); }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"MrylVec_{out_et} {r} = mryl_vec_{out_et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" mryl_vec_{out_et}_push(&{r}, {lam_fn}({src_ref}.data[{i_var}], {lam_env})); }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── filter ──────────────────────────────────────────────
         if method == 'filter':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{et} {r} = mryl_vec_{et}_new(); "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if ({lam}({obj_c}.data[{i_var}])) {{ "
-                f"mryl_vec_{et}_push(&{r}, {obj_c}.data[{i_var}]); }} }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"MrylVec_{et} {r} = mryl_vec_{et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if ({lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{"
+                f" mryl_vec_{et}_push(&{r}, {src_ref}.data[{i_var}]); }} }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── take ─────────────────────────────────────────────────
+        # take は .len を縮めるだけでポインタ移動なし。
+        # src_is_temp=True のとき: ソースをキャプチャし、所有権を結果に移す（free しない）。
         if method == 'take':
-            n   = self._generate_expr(expr.args[0])
-            r   = f"__iter_{idx}"
+            n = self._generate_expr(expr.args[0])
+            r = f"__iter_{idx}"
             return (
-                f"({{ MrylVec_{et} {r} = {obj_c}; "
-                f"if ({n} < {r}.len) {r}.len = {n}; "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"MrylVec_{et} {r} = {src_ref};{NL}"
+                f"if ({n} < {r}.len) {r}.len = {n};{NL}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── skip ─────────────────────────────────────────────────
+        # src_is_temp=False: ユーザー変数が対象 → view 方式（従来どおり）。
+        # src_is_temp=True : 中間 MrylVec が対象 → オフセットポインタを free すると
+        #                    UB になるため、コピー方式に変更して安全に free する。
         if method == 'skip':
-            n   = self._generate_expr(expr.args[0])
-            s   = f"__s_{idx}"
-            r   = f"__iter_{idx}"
-            return (
-                f"({{ int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len); "
-                f"MrylVec_{et} {r}; "
-                f"{r}.data = {obj_c}.data + {s}; "
-                f"{r}.len  = {obj_c}.len - {s}; "
-                f"{r}.cap  = {obj_c}.cap - {s}; "
-                f"{r}; }})"
-            )
+            n = self._generate_expr(expr.args[0])
+            s = f"__s_{idx}"
+            r = f"__iter_{idx}"
+            if src_is_temp:
+                return (
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"int32_t {s} = ({n} < {src_ref}.len ? {n} : {src_ref}.len);{NL}"
+                    f"MrylVec_{et} {r} = mryl_vec_{et}_new();{NL}"
+                    f"for (int32_t {i_var} = {s}; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" mryl_vec_{et}_push(&{r}, {src_ref}.data[{i_var}]); }}{NL}"
+                    f"{src_free}"
+                    f"{r};"
+                    f"{CLOSE}"
+                )
+            else:
+                return (
+                    f"{OPEN}"
+                    f"int32_t {s} = ({n} < {obj_c}.len ? {n} : {obj_c}.len);{NL}"
+                    f"MrylVec_{et} {r};{NL}"
+                    f"{r}.data = {obj_c}.data + {s};{NL}"
+                    f"{r}.len  = {obj_c}.len - {s};{NL}"
+                    f"{r}.cap  = {obj_c}.cap - {s};{NL}"
+                    f"{r};"
+                    f"{CLOSE}"
+                )
 
         # ── to_array ─────────────────────────────────────────────
+        # 所有権を呼び出し側に移す。free しない。
         if method == 'to_array':
             return obj_c
 
         # ── count ────────────────────────────────────────────────
         if method == 'count':
+            if src_is_temp:
+                cnt = f"__cnt_{idx}"
+                return (
+                    f"{OPEN}"
+                    f"MrylVec_{et} {src_var} = {obj_c};{NL}"
+                    f"int32_t {cnt} = {src_var}.len;{NL}"
+                    f"free({src_var}.data);{NL}"
+                    f"{cnt};"
+                    f"{CLOSE}"
+                )
             return f"{obj_c}.len"
 
         # ── any ──────────────────────────────────────────────────
         if method == 'any':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             found = f"__found_{idx}"
             return (
-                f"({{ int {found} = 0; "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if ({lam}({obj_c}.data[{i_var}])) {{ {found} = 1; break; }} }} "
-                f"{found}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"int {found} = 0;{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if ({lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{ {found} = 1; break; }} }}{NL}"
+                f"{src_free}"
+                f"{found};"
+                f"{CLOSE}"
             )
 
         # ── all ──────────────────────────────────────────────────
         if method == 'all':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
             ok  = f"__ok_{idx}"
             return (
-                f"({{ int {ok} = 1; "
-                f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"if (!{lam}({obj_c}.data[{i_var}])) {{ {ok} = 0; break; }} }} "
-                f"{ok}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"int {ok} = 1;{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" if (!{lam_fn}({src_ref}.data[{i_var}], {lam_env})) {{ {ok} = 0; break; }} }}{NL}"
+                f"{src_free}"
+                f"{ok};"
+                f"{CLOSE}"
             )
 
         # ── for_each ─────────────────────────────────────────────
+        # GCC statement expression ({...}) を使わず通常ブロック {..} として返す。
+        # for_each は void 専用（TypeChecker が式コンテキストでの使用を禁止）なので
+        # 末尾の値式 (void)0; は不要。ExprStmt ハンドラ側で ; を付与しない。
         if method == 'for_each':
-            lam = _lam(0)
+            lam_setup, lam_fn, lam_env = _lam_full(0)
+            # src_free は末尾に NL を持つため、ある場合はその前に for ループを置く
+            src_free_block = f"{NL}free({src_var}.data);" if src_is_temp else ""
             return (
-                f"({{ for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                f"{lam}({obj_c}.data[{i_var}]); }} (void)0; }})"
+                f"{{{NL}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                f" {lam_fn}({src_ref}.data[{i_var}], {lam_env}); }}"
+                f"{src_free_block}"
+                f"\n{base_indent}}}"
             )
 
         # ── first ────────────────────────────────────────────────
@@ -781,49 +966,113 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             self.result_type_registry.add((ct, "MrylString", struct))
             r = f"__first_{idx}"
             return (
-                f"({{ {struct} {r}; "
-                f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
-                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {obj_c}.data[0]; }} "
-                f"{r}; }})"
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{struct} {r};{NL}"
+                f"if ({src_ref}.len == 0) {{"
+                f" {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }}{NL}"
+                f"else {{ {r}.is_ok = 1; {r}.data.ok_val = {src_ref}.data[0]; }}{NL}"
+                f"{src_free}"
+                f"{r};"
+                f"{CLOSE}"
             )
 
         # ── aggregate ────────────────────────────────────────────
         if method == 'aggregate':
             if len(expr.args) == 1:
                 # 初期値なし: Result<T, string>
-                lam    = _lam(0)
+                lam_setup, lam_fn, lam_env = _lam_full(0)
                 struct = f"MrylResult_{ct}_MrylString"
                 self.result_type_registry.add((ct, "MrylString", struct))
                 r   = f"__agg_{idx}"
                 acc = f"__acc_{idx}"
                 return (
-                    f"({{ {struct} {r}; "
-                    f"if ({obj_c}.len == 0) {{ {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }} "
-                    f"else {{ {ct} {acc} = {obj_c}.data[0]; "
-                    f"for (int32_t {i_var} = 1; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
-                    f"{r}.is_ok = 1; {r}.data.ok_val = {acc}; }} "
-                    f"{r}; }})"
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"{lam_setup}"
+                    f"{struct} {r};{NL}"
+                    f"if ({src_ref}.len == 0) {{"
+                    f" {r}.is_ok = 0; {r}.data.err_val = make_mryl_string(\"empty sequence\"); }}{NL}"
+                    f"else {{{NL}"
+                    f"    {ct} {acc} = {src_ref}.data[0];{NL}"
+                    f"    for (int32_t {i_var} = 1; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" {acc} = {lam_fn}({acc}, {src_ref}.data[{i_var}], {lam_env}); }}{NL}"
+                    f"    {r}.is_ok = 1; {r}.data.ok_val = {acc};{NL}}}{NL}"
+                    f"{src_free}"
+                    f"{r};"
+                    f"{CLOSE}"
                 )
             else:
                 # 初期値あり: aggregate(init, fn) -> U
-                init_c = self._generate_expr(expr.args[0])
-                lam    = _lam(1)
-                init_t = self._infer_expr_type(expr.args[0])
+                init_c  = self._generate_expr(expr.args[0])
+                lam_setup, lam_fn, lam_env = _lam_full(1)
+                init_t  = self._infer_expr_type(expr.args[0])
                 init_ct = self._type_to_c_base(init_t) if init_t not in ("i32", "any") else ct
-                acc    = f"__acc_{idx}"
+                acc     = f"__acc_{idx}"
                 return (
-                    f"({{ {init_ct} {acc} = {init_c}; "
-                    f"for (int32_t {i_var} = 0; {i_var} < {obj_c}.len; {i_var}++) {{ "
-                    f"{acc} = {lam}({acc}, {obj_c}.data[{i_var}]); }} "
-                    f"{acc}; }})"
+                    f"{OPEN}"
+                    f"{src_cap}"
+                    f"{lam_setup}"
+                    f"{init_ct} {acc} = {init_c};{NL}"
+                    f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{"
+                    f" {acc} = {lam_fn}({acc}, {src_ref}.data[{i_var}], {lam_env}); }}{NL}"
+                    f"{src_free}"
+                    f"{acc};"
+                    f"{CLOSE}"
                 )
 
-        # ── select_many (C gen defer) ─────────────────────────────
+        # ── select_many ──────────────────────────────────────────────
+        # Lambda: fn(T) -> U[]  →  output: Iter<U>
+        # 外側ループ: 各 T 要素にラムダを適用 → MrylVec_U __inner を取得
+        # 内側ループ: __inner の各要素を __result に push
+        # __inner.data の free: ラムダが新規確保した場合のみ行う。
+        #   VarRef を返す場合はポインタ共有のため free 不可（UB 防止）。
         if method == 'select_many':
-            raise NotImplementedError(
-                "select_many C code generation is deferred to v0.5.0. "
-                "Use Python interpreter mode for now."
+            lam_setup, lam_fn, lam_env = _lam_full(0)
+
+            # out_et: 展開後の要素型 (U)。Lambda の inferred_return_type.name から取得。
+            lam_arg = expr.args[0] if expr.args else None
+            if isinstance(lam_arg, Lambda):
+                inferred = getattr(lam_arg, 'inferred_return_type', None)
+                if inferred is not None:
+                    out_et = inferred.name
+                else:
+                    # フォールバック: et が vec_U なら U を取り出す
+                    out_et = et[4:] if et.startswith("vec_") else et
+            else:
+                out_et = et[4:] if et.startswith("vec_") else et
+
+            inner  = f"__inner_{idx}"
+            result = f"__result_{idx}"
+            j_var  = f"__j_{idx}"
+            # NL2: 外側 for ループ本体のインデント（statement expression 内より1段深い）
+            NL2 = NL + "    "
+
+            # ラムダの body 種別から __inner.data を free すべきか判定する。
+            # - VarRef: 既存配列の参照を返す → ポインタ共有 → free 不可（UB）
+            # - ArrayLiteral / FunctionCall / MethodCall: 新規確保 → free 可
+            # - 関数参照渡し（Lambda 以外）やその他: 不明 → 安全側で free しない
+            if isinstance(lam_arg, Lambda) and lam_arg.body is not None:
+                body_cls = lam_arg.body.__class__.__name__
+                inner_needs_free = body_cls in ('ArrayLiteral', 'FunctionCall', 'MethodCall')
+            else:
+                inner_needs_free = False
+            inner_free = f"free({inner}.data);{NL2}" if inner_needs_free else ""
+
+            return (
+                f"{OPEN}"
+                f"{src_cap}"
+                f"{lam_setup}"
+                f"MrylVec_{out_et} {result} = mryl_vec_{out_et}_new();{NL}"
+                f"for (int32_t {i_var} = 0; {i_var} < {src_ref}.len; {i_var}++) {{{NL2}"
+                f"MrylVec_{out_et} {inner} = {lam_fn}({src_ref}.data[{i_var}], {lam_env});{NL2}"
+                f"for (int32_t {j_var} = 0; {j_var} < {inner}.len; {j_var}++) {{"
+                f" mryl_vec_{out_et}_push(&{result}, {inner}.data[{j_var}]); }}{NL2}"
+                f"{inner_free}"
+                f"{NL}}}{NL}"
+                f"{src_free}"
+                f"{result};"
+                f"{CLOSE}"
             )
 
         raise RuntimeError(f"Unknown iter method in codegen: {method}")
