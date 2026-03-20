@@ -6,8 +6,72 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
     """文(Statement)レベルの C コード生成を担当する Mixin
     _generate_statement / _generate_conditional_block / _generate_let /
     _generate_return / _generate_if / _generate_if_inline /
-    _generate_while / _generate_for / _generate_array_element
+    _generate_while / _generate_for / _generate_array_element /
+    _box_nesting_depth / _emit_box_free / _emit_box_vec_free
     """
+
+    # ------------------------------------------------------------------
+    # Box メモリ管理ヘルパー
+    # ------------------------------------------------------------------
+
+    def _box_nesting_depth(self, type_node) -> int:
+        """Box<Box<...<T>...>> のネスト深度を返す。
+        Box<i32> = 1, Box<Box<i32>> = 2, Box<Box<Box<i32>>> = 3
+        type_args 要素が文字列の場合も安全に処理する。
+        """
+        depth = 0
+        t = type_node
+        while (t is not None and not isinstance(t, str)
+               and hasattr(t, 'name') and t.name == "Box"
+               and getattr(t, 'type_args', None)):
+            depth += 1
+            t = t.type_args[0]
+        return max(depth, 1)
+
+    def _emit_box_free(self, c_var_name: str, type_node) -> None:
+        """Box 変数の free 文を生成する。
+        inner_moved（内部ポインタが別変数に移動済み）の場合は最外層のみ free。
+        それ以外は深い層から順に free して最後に外層を free する。
+        例: Box<Box<Box<i32>>> box → free(**box); free(*box); free(box);
+        """
+        if c_var_name in self.box_inner_moved:
+            # 内部ポインタは移動先変数で解放済み → 外層のポインタ配置のみ解放
+            self._emit(f"free({c_var_name});")
+            return
+        depth = self._box_nesting_depth(type_node)
+        # 最深部から順に free: depth=3 → free(**p); free(*p); free(p)
+        for d in range(depth - 1, 0, -1):
+            self._emit(f"free({'*' * d}{c_var_name});")
+        self._emit(f"free({c_var_name});")
+
+    def _emit_box_vec_free(self, c_var_name: str) -> None:
+        """Vec<Box<T>> 変数の free 文を生成する。
+        各要素（Box ポインタ）を先に free してから .data を free する。
+        ループ変数は loop_counter で一意化する（変数名依存の衝突を防ぐ）。
+        """
+        loop_var = f"__bv_i_{self.loop_counter}"
+        self.loop_counter += 1
+        self._emit(f"for (int32_t {loop_var} = 0; {loop_var} < {c_var_name}.len; {loop_var}++) {{")
+        self.indent_level += 1
+        self._emit(f"free({c_var_name}.data[{loop_var}]);")
+        self.indent_level -= 1
+        self._emit("}")
+        self._emit(f"free({c_var_name}.data);")
+
+    def _emit_loop_iteration_cleanup(self, saved_str_vars: list, saved_box_count: int, saved_bv_count: int) -> None:
+        """ループイテレーション内で宣言された変数を解放し、保存状態に復元する。
+        while / for の各ブランチで共通して使用する（DRY）。
+        """
+        for vn in self.local_string_vars:
+            if vn not in saved_str_vars:
+                self._emit(f"free_mryl_string({vn});")
+        self.local_string_vars = saved_str_vars
+        for (vn, tn) in reversed(self.local_box_vars[saved_box_count:]):
+            self._emit_box_free(vn, tn)
+        self.local_box_vars = self.local_box_vars[:saved_box_count]
+        for (vn, _tn) in reversed(self.local_box_vec_vars[saved_bv_count:]):
+            self._emit_box_vec_free(vn)
+        self.local_box_vec_vars = self.local_box_vec_vars[:saved_bv_count]
 
     def _generate_statement(self, stmt):
         """文ノードを C コードとして出力する (ディスパッチャ) """
@@ -31,7 +95,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             self._generate_for(stmt)
         elif stmt_class == "ExprStmt":
             expr_code = self._generate_expr(stmt.expr)
-            self._emit(f"{self._strip_outer_parens(expr_code)};")
+            # for_each は void 専用のブロック文 {..} を返すため ; 不要
+            # （他の iter メソッドは値を返す statement expression ({..}) なので ; が必要）
+            if hasattr(stmt.expr, 'method') and stmt.expr.method == 'for_each':
+                self._emit(expr_code)
+            else:
+                self._emit(f"{self._strip_outer_parens(expr_code)};")
         elif stmt_class == "Assignment":
             target = self._generate_expr(stmt.target)
             value  = self._generate_expr(stmt.expr)
@@ -73,29 +142,69 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
 
         var_type = self._type_to_c(type_node)
 
-        # ラムダ式: 関数ポインタ変数として宣言
+        # ラムダ式: fat pointer struct 変数として宣言
         if init_expr_class == "Lambda":
-            lam_name, ret_type, params_str, captures = self._generate_lambda_inline(stmt.init_expr, stmt.name)
+            lam_name, ret_type, params_str, _ = self._generate_lambda_inline(stmt.init_expr, stmt.name)
             c_var_name = _safe_c_name(stmt.name)
             if c_var_name != stmt.name:
                 self.ident_renames[stmt.name] = c_var_name
-            if captures:
-                env_struct   = f"{lam_name}_env_t"
-                closure_type = f"{lam_name}_closure_t"
-                self._emit(f"{closure_type} {c_var_name};")
-                self._emit(f"{c_var_name}.fn = {lam_name};")
-                for cap_name in captures:
-                    self._emit(f"{c_var_name}.env.{cap_name} = {cap_name};")
-                self.env[-1][stmt.name] = "fn_closure"
-                self.closure_env_types[stmt.name] = lam_name
-            else:
+
+            if ret_type == "MrylTask*":
+                # async lambda: 旧挙動を維持
                 self._emit(f"{ret_type} (*{c_var_name})({params_str}) = {lam_name};")
-                if ret_type == "MrylTask*":
-                    self.env[-1][stmt.name] = "async_fn"
-                    self.async_lambda_factories[stmt.name] = lam_name
-                else:
-                    self.env[-1][stmt.name] = "fn"
+                self.env[-1][stmt.name] = "async_fn"
+                self.async_lambda_factories[stmt.name] = lam_name
+                return
+
+            info     = self.lambda_captures.get(lam_name, {})
+            captures = info.get('captures', {})
+            ret_c    = info.get('ret_c', ret_type)
+            arg_cs   = info.get('arg_cs', [])
+
+            # MrylFn_* struct 型名を決定
+            if type_node and type_node.name == "fn" and getattr(type_node, 'type_args', None):
+                fn_c_type = self._type_to_c(type_node)
+            else:
+                arg_part  = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs) if arg_cs else "void"
+                ret_part  = ret_c.replace("*", "Ptr").replace(" ", "_")
+                fn_c_type = f"MrylFn_{arg_part}_ret_{ret_part}"
+                self.fn_type_registry.add((tuple(arg_cs), ret_c, fn_c_type))
+
+            if captures:
+                env_struct = f"{lam_name}_env_t"
+                # ⑨ lam_name ベースで一意な env ポインタ名（変数名衝突を回避）
+                env_ptr    = f"__env_{lam_name}"
+                self._emit(f"{env_struct}* {env_ptr} = ({env_struct}*)malloc(sizeof({env_struct}));")
+                for cap_name in captures:
+                    c_cap = self.ident_renames.get(cap_name, _safe_c_name(cap_name))
+                    self._emit(f"{env_ptr}->{cap_name} = {c_cap};")
+                self._emit(f"{fn_c_type} {c_var_name} = {{{lam_name}, {env_ptr}}};")
+                # ⑥ 返値にならない closure env を追跡（関数末尾で free）
+                self.local_closure_envs.append(env_ptr)
+                # ⑥ var_name → env_ptr の逆引き（return 時に free スキップするため）
+                self.closure_var_env_ptrs[stmt.name] = env_ptr
+            else:
+                self._emit(f"{fn_c_type} {c_var_name} = {{{lam_name}, NULL}};")
+
+            self.env[-1][stmt.name] = "fn"
+            # ⑦ キャプチャ型解決用に MrylFn_* 型名を登録
+            self.fn_var_c_types[stmt.name] = fn_c_type
             return
+
+        # FunctionCall が fn(T)->U を返す場合（型注釈なし）: MrylFn_* struct として宣言（issue ①）
+        if init_expr_class == "FunctionCall" and type_node is None:
+            fn_decl = self.program_functions.get(stmt.init_expr.name)
+            if fn_decl and fn_decl.return_type and fn_decl.return_type.name == "fn" \
+                    and getattr(fn_decl.return_type, 'type_args', None):
+                fn_c_type  = self._type_to_c(fn_decl.return_type)
+                c_var_name = _safe_c_name(stmt.name)
+                if c_var_name != stmt.name:
+                    self.ident_renames[stmt.name] = c_var_name
+                rhs = self._generate_expr(stmt.init_expr)
+                self._emit(f"{fn_c_type} {c_var_name} = {rhs};")
+                self.env[-1][stmt.name] = "fn"
+                self.fn_var_c_types[stmt.name] = fn_c_type
+                return
 
         # static fn 参照（has_parens=False の EnumVariantExpr）を fn 型変数として宣言
         if init_expr_class == "EnumVariantExpr" and not stmt.init_expr.has_parens:
@@ -148,7 +257,16 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 "f32": "float", "f64": "double", "bool": "int",
                 "string": "MrylString",
             }
-            ct = _c_map.get(et, "int32_t")
+            # Box<T>[] の場合: 要素型 "Box_T"、C 型は T*
+            if et == "Box" and getattr(type_node, 'type_args', None):
+                inner_tn   = type_node.type_args[0]
+                inner_mryl = inner_tn.name if inner_tn else "i32"
+                et         = f"Box_{inner_mryl}"
+                ct         = _c_map.get(inner_mryl, "int32_t") + "*"
+                # Vec<Box<T>> 変数を追跡（スコープ終了時に要素 + .data を free）
+                self.local_box_vec_vars.append((stmt.name, inner_tn))
+            else:
+                ct = _c_map.get(et, "int32_t")
             if init_expr_class == "ArrayLiteral" and stmt.init_expr.elements:
                 elements  = [self._generate_expr(elem) for elem in stmt.init_expr.elements]
                 elems_str = ", ".join(elements)
@@ -207,6 +325,21 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     c = self._type_to_c_base(inferred_mryl)
                     var_type = c if c not in ("any", "") else "int32_t"
             self._emit(f"{var_type} {stmt.name} = {self._strip_outer_parens(init_expr)};")
+            # ユーザー定義の struct Box がある場合は built-in Box<T>（heap 確保）ではないため除外。
+            # generate() でキャッシュ済みの has_user_box を使用（O(N) → O(1)）。
+            if type_node and type_node.name == "Box" and not self.has_user_box:
+                # built-in Box<T> 変数を追跡（スコープ終了・return 前に free を生成するため）
+                c_var = self.ident_renames.get(stmt.name, stmt.name)
+                # let X: Box<T> = *Y の場合: Y の内部ポインタが X に移動したことをマーク
+                # → Y の free は最外層のみになり、内部 free は X 側で行われる
+                if (stmt.init_expr is not None
+                        and stmt.init_expr.__class__.__name__ == "UnaryOp"
+                        and getattr(stmt.init_expr, 'op', None) in ("*", "deref")
+                        and stmt.init_expr.operand.__class__.__name__ == "VarRef"):
+                    src_c = self.ident_renames.get(stmt.init_expr.operand.name,
+                                                   stmt.init_expr.operand.name)
+                    self.box_inner_moved.add(src_c)
+                self.local_box_vars.append((c_var, type_node))
             if type_node:
                 # Result<T, E> は "Result_T" 形式で env 登録する（_pattern_binding_types が ok_type を参照するため）
                 if type_node.name == "Result" and getattr(type_node, 'type_args', None):
@@ -216,6 +349,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 elif type_node.name == "Option" and getattr(type_node, 'type_args', None):
                     inner_name = type_node.type_args[0].name if type_node.type_args else "int32_t"
                     mryl_name = f"MrylOption_{inner_name}"
+                # fn 型: TypeChecker が type_node を付与した場合も fat pointer 呼び出しを正しく解決できるよう
+                # env を "fn" で登録し fn_var_c_types に C 型名を記録する
+                elif type_node.name == "fn":
+                    self.env[-1][stmt.name] = "fn"
+                    self.fn_var_c_types[stmt.name] = var_type
+                    return
                 else:
                     # ジェネリック具体化名 (例: Box_string) で env 登録 (#31)
                     mryl_name = type_node.name
@@ -299,14 +438,54 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
             if inferred == "string":
                 return_var_to_deep_copy = stmt.expr.name
 
-        # --- cleanup: return より前に文字列変数を解放 ---
+        # --- cleanup: return より前に文字列変数・closure env・Box 変数を解放 ---
         # 返値となる変数は use-after-free を防ぐためここでは解放しない
         for var_name in list(self.local_string_vars):
             if var_name != return_var_to_deep_copy:
                 self._emit(f"free_mryl_string({var_name});")
+        # 返値にならない closure env を解放（⑥: 返却される fn 変数の env は free 不可）
+        return_var_name = stmt.expr.name if stmt.expr and stmt.expr.__class__.__name__ == "VarRef" else None
+        skip_env_ptr = self.closure_var_env_ptrs.get(return_var_name) if return_var_name else None
+        for env_ptr in list(self.local_closure_envs):
+            if env_ptr != skip_env_ptr:
+                self._emit(f"free({env_ptr});")
+        # Box 変数を宣言の逆順で解放（返値 Box はスキップ）
+        return_var_c = self.ident_renames.get(return_var_name, return_var_name) if return_var_name else None
+        for (vn, tn) in reversed(self.local_box_vars):
+            if vn != return_var_c:
+                self._emit_box_free(vn, tn)
+        # Vec<Box<T>> 変数: 要素を先に free してから .data を free
+        for (vn, _inner_tn) in reversed(self.local_box_vec_vars):
+            self._emit_box_vec_free(vn)
 
         if stmt.expr:
             expr_class = stmt.expr.__class__.__name__
+
+            # Lambda を直接 return: heap alloc env + fat pointer struct を返す
+            if expr_class == "Lambda":
+                lam_name = self._generate_lambda(stmt.expr)
+                info     = self.lambda_captures.get(lam_name, {})
+                captures = info.get('captures', {})
+                ret_c    = info.get('ret_c', 'int32_t')
+                arg_cs   = info.get('arg_cs', [])
+                ret_type_str = self.current_return_type
+                if not ret_type_str:
+                    arg_part     = "_".join(c.replace("*", "Ptr").replace(" ", "_") for c in arg_cs) if arg_cs else "void"
+                    ret_part     = ret_c.replace("*", "Ptr").replace(" ", "_")
+                    ret_type_str = f"MrylFn_{arg_part}_ret_{ret_part}"
+                    self.fn_type_registry.add((tuple(arg_cs), ret_c, ret_type_str))
+                if captures:
+                    env_struct = f"{lam_name}_env_t"
+                    env_ptr    = f"__ret_env_{lam_name}"
+                    self._emit(f"{env_struct}* {env_ptr} = ({env_struct}*)malloc(sizeof({env_struct}));")
+                    for n in captures:
+                        c_n = self.ident_renames.get(n, _safe_c_name(n))
+                        self._emit(f"{env_ptr}->{n} = {c_n};")
+                    self._emit(f"return ({ret_type_str}){{{lam_name}, {env_ptr}}};")
+                else:
+                    self._emit(f"return ({ret_type_str}){{{lam_name}, NULL}};")
+                return
+
             if expr_class == "FunctionCall" and stmt.expr.name in ("Ok", "Err") \
                     and self.current_return_type:
                 val_code    = self._generate_expr(stmt.expr.args[0]) if stmt.expr.args else "0"
@@ -380,13 +559,13 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
         cond = self._generate_expr(stmt.condition)
         self._emit(f"while ({self._strip_outer_parens(cond)}) {{")
         self.indent_level += 1
-        saved_str_vars = list(self.local_string_vars)
+        saved_str_vars  = list(self.local_string_vars)
+        saved_box_count = len(self.local_box_vars)
+        saved_bv_count  = len(self.local_box_vec_vars)
         for s in stmt.body.statements:
             self._generate_statement(s)
-        for vn in self.local_string_vars:
-            if vn not in saved_str_vars:
-                self._emit(f"free_mryl_string({vn});")
-        self.local_string_vars = saved_str_vars
+        # ループ内で宣言された文字列・Box 変数をイテレーション末に解放
+        self._emit_loop_iteration_cleanup(saved_str_vars, saved_box_count, saved_bv_count)
         self.indent_level -= 1
         self._emit("}")
 
@@ -457,13 +636,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     }.get(et, "int32_t")
                     self._emit(f"{ct} {stmt.variable} = {var_name}.data[{loop_var_name}];")
                     self.env[-1][stmt.variable] = et
-                    saved_str_vars = list(self.local_string_vars)
+                    saved_str_vars  = list(self.local_string_vars)
+                    saved_box_count = len(self.local_box_vars)
+                    saved_bv_count  = len(self.local_box_vec_vars)
                     for s in stmt.body.statements:
                         self._generate_statement(s)
-                    for vn in self.local_string_vars:
-                        if vn not in saved_str_vars:
-                            self._emit(f"free_mryl_string({vn});")
-                    self.local_string_vars = saved_str_vars
+                    self._emit_loop_iteration_cleanup(saved_str_vars, saved_box_count, saved_bv_count)
                     self.indent_level -= 1
                     self._emit("}")
                     return
@@ -485,13 +663,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                     arr_elem_c    = _c_arr_map.get(arr_elem_type, arr_elem_type)
                     self._emit(f"{arr_elem_c} {stmt.variable} = {var_name}[{loop_var_name}];")
                     self.env[-1][stmt.variable] = arr_elem_type
-                    saved_str_vars = list(self.local_string_vars)
+                    saved_str_vars  = list(self.local_string_vars)
+                    saved_box_count = len(self.local_box_vars)
+                    saved_bv_count  = len(self.local_box_vec_vars)
                     for s in stmt.body.statements:
                         self._generate_statement(s)
-                    for vn in self.local_string_vars:
-                        if vn not in saved_str_vars:
-                            self._emit(f"free_mryl_string({vn});")
-                    self.local_string_vars = saved_str_vars
+                    self._emit_loop_iteration_cleanup(saved_str_vars, saved_box_count, saved_bv_count)
                     self.indent_level -= 1
                     self._emit("}")
                     return
@@ -510,13 +687,12 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 )
 
         self.indent_level += 1
-        saved_str_vars = list(self.local_string_vars)
+        saved_str_vars  = list(self.local_string_vars)
+        saved_box_count = len(self.local_box_vars)
+        saved_bv_count  = len(self.local_box_vec_vars)
         for s in stmt.body.statements:
             self._generate_statement(s)
-        for vn in self.local_string_vars:
-            if vn not in saved_str_vars:
-                self._emit(f"free_mryl_string({vn});")
-        self.local_string_vars = saved_str_vars
+        self._emit_loop_iteration_cleanup(saved_str_vars, saved_box_count, saved_bv_count)
         self.indent_level -= 1
         self._emit("}")
 

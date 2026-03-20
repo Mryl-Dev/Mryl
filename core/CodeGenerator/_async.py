@@ -209,7 +209,9 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
                         ctype = self._type_to_c(await_stmt.type_node)
                         self._emit(f"if ({handle}->state == MRYL_TASK_CANCELLED) {{")
                         self.indent_level += 1
-                        self._emit(f"__sm->{var} = 0;")
+                        # struct 型（Result/Option 等）は "= 0" では代入できないため
+                        # memset でゼロ初期化する。is_ok=0 となり Err 扱いになる (#51)
+                        self._emit(f"memset(&__sm->{var}, 0, sizeof({ctype}));")
                         self.indent_level -= 1
                         self._emit("} else {")
                         self.indent_level += 1
@@ -334,7 +336,9 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
                 handle = self._generate_expr(await_stmt.init_expr.expr)
 
         self._emit(f"{handle}->awaiter = __task;")
-        self._emit(f"if ({handle}->state != MRYL_TASK_COMPLETED) {{")
+        # COMPLETED / FAULTED どちらもタスク終了済み → resume コードへ続行
+        # それ以外（PENDING/RUNNING/CANCELLED）はサスペンドして再スケジュールを待つ (#51)
+        self._emit(f"if ({handle}->state != MRYL_TASK_COMPLETED && {handle}->state != MRYL_TASK_FAULTED) {{")
         self.indent_level += 1
         self._emit(f"__sm->__state = {next_state};")
         self._emit("return;")
@@ -406,7 +410,14 @@ class CodeGeneratorAsyncMixin(_CodeGeneratorBase):
                 self._emit(f"{ret_ctype}* __res = ({ret_ctype}*)malloc(sizeof({ret_ctype}));")
                 self._emit(f"*__res = {ret_code};")
                 self._emit(f"__task->result = (void*)__res;")
-            self._emit("__task->state = MRYL_TASK_COMPLETED;")
+                # Result<T,E> の場合: is_ok フラグで FAULTED/COMPLETED を切り替え
+                # Err を返した場合に await 側でエラー値を受け取れるようにする (#51)
+                if func.return_type and func.return_type.name == "Result":
+                    self._emit("__task->state = __res->is_ok ? MRYL_TASK_COMPLETED : MRYL_TASK_FAULTED;")
+                else:
+                    self._emit("__task->state = MRYL_TASK_COMPLETED;")
+            else:
+                self._emit("__task->state = MRYL_TASK_COMPLETED;")
             self._emit("__task_release(__task);")
             self._emit("if (__task->awaiter) __scheduler_post(__task->awaiter);")
             self._emit("return;")

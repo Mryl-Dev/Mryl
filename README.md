@@ -1,4 +1,4 @@
-# Mryl プログラミング言語(v0.4.0) - 言語リファレンス
+# Mryl プログラミング言語(v0.5.0) - 言語リファレンス
 
 <p align="left">
   <img src="assets/icon_banner.svg" width="700" alt="Mryl banner"/>
@@ -6,7 +6,7 @@
 
 **Mryl（ミリルと読みます）** は、静的型付け、型推論、ジェネリック、構造体、配列などを備えた小さな本格的なプログラミング言語です。
 
-言語の詳細仕様は **doc/mryl_specification.md** を参照してください。
+- [言語詳細仕様はこちら](doc/design/mryl_specification.md)
 
 ## 目次
 
@@ -128,9 +128,9 @@ fn main() -> i32 {
 |------|------|
 | **OS** | Windows 11 25H2（ビルド 26200.7623） |
 | **エディタ** | Visual Studio Code 64bit |
-| **開発言語** | Python 3.9.x, C |
+| **開発言語** | Python 3.14.x, C |
 | **コンパイラ** | GCC 16.0.1（Cygwin 経由） |
-| **AI エージェント** | GitHub Copilot - Claude Sonnet 4.6（テスト・デバッグ補助）|
+| **AI エージェント** | Claude Code - Claude Sonnet 4.6（テスト・デバッグ補助）|
 
 > AI エージェントはテストケースの生成・デバッグ支援に使用しており、言語コア実装には関与していません。
 
@@ -244,7 +244,7 @@ Mryl は以下の機能を備えています：
 - **インクリメント/デクリメント**：`++`, `--` 演算子対応
 - **フォーマット文字列**：Rust 風の `println("i = {}", i)` 表記
 - **関数**：戻り値型指定、複数パラメータ、前方宣言による相互再帰
-- **ラムダ式**：`(x, y) => x + y` の無名関数
+- **ラムダ式**：`(x, y) => x + y` の無名関数（クロージャキャプチャ対応・C コード生成は fat pointer 方式）
 - **fn 型パラメータ**：関数をコールバックとして渡せる高階関数
 - **fix キーワード**：不変変数・不変引数の宣言
 - **async/await**：非同期関数と待機構文（async ラムダ含む）
@@ -818,6 +818,34 @@ fn main() {
 }
 ```
 
+### async fn と Result\<T,E\>
+
+`async fn` の戻り値型に `Result<T,E>` を指定できます。
+`Err(...)` を返した場合、タスク状態は `MRYL_TASK_FAULTED` に遷移します。
+`await` 側は `COMPLETED` と `FAULTED` の両方を完了として扱い、`Result` 値をそのまま取得できます。
+
+```mryl
+async fn fetch(url: string) -> Result<string, string> {
+    if (url == "") {
+        return Err("empty url");
+    }
+    return Ok("data received");
+}
+
+fn main() {
+    let r: Result<string, string> = await fetch("");
+    match r {
+        Ok(v)  => println("ok: {}", v),
+        Err(e) => println("err: {}", e),   // "err: empty url"
+    };
+}
+```
+
+> **FAULTED 状態**: `Err(...)` を返す `async fn` は `MRYL_TASK_FAULTED` をセットして終了します。
+> `await` の停止条件は `COMPLETED || FAULTED` であるため、エラーも含めて正しく待機・取得できます。
+
+---
+
 ### アーキテクチャ概要
 
 Mryl の async/await は **C# 風の状態機械 + シングルスレッドスケジューラ** で実装されています。
@@ -847,7 +875,7 @@ pthreads は使用しません。
 typedef struct MrylTask {
     int           strong_count;  // 強参照カウント（共有所有権）
     int           weak_count;    // 弱参照カウント（キャンセルトークン用）
-    MrylTaskState state;         // PENDING / RUNNING / COMPLETED / CANCELLED / FAULTED
+    MrylTaskState state;         // PENDING / RUNNING / COMPLETED / CANCELLED / FAULTED(Err返却時)
     void*         result;        // 戻り値（ヒープ確保）
     void        (*move_next)(struct MrylTask*);  // 状態遷移関数ポインタ
     void        (*on_cancel)(struct MrylTask*);  // キャンセル時コールバック
@@ -937,6 +965,7 @@ awaiter が存在すれば自動的に再スケジュールされます。
 | スケジューラ | シングルスレッド循環バッファ（cap=65536）|
 | 戻り値受け渡し | `MrylTask*.result`（`void*`、ヒープ確保）|
 | 参照カウント | `strong_count` + `weak_count`（shared/weak_ptr 相当）|
+| `Result<T,E>` 返し | `Err(...)` 返却時に `MRYL_TASK_FAULTED`、`await` は COMPLETED/FAULTED 両方で停止 |
 | キャンセル | `__task_cancel()` + `on_cancel` コールバック |
 | `#include` | `<pthread.h>` 不要、`-lpthread` リンク不要 |
 | Python モード | `asyncio.create_task()` + `loop.run_until_complete()` |
@@ -1196,8 +1225,11 @@ let p: Shape     = Shape::Point;
 
 ## match 式
 
-`match` はパターンマッチングによる分岐構文です。  
+`match` はパターンマッチングによる分岐構文です。
 `if-else` の代わりに enum バリアントや単純な値に対して使えます。
+
+> **設計メモ**: `match` は基本的に**式**として設計されており、評価結果を変数に代入するのが主な用途です。
+> ただし、全アームが `println` 等の `void` を返す場合は**文としても使用可能**です（値は破棄されます）。
 
 ### enum に対する match
 
@@ -1408,6 +1440,41 @@ println("{}", (*bb).unbox());    // 99
 // 3重・4重も同様
 let bbb: Box<Box<Box<i32>>>      = Box::new(Box::new(Box::new(7)));
 let bbbb: Box<Box<Box<Box<i32>>>> = Box::new(Box::new(Box::new(Box::new(3))));
+```
+
+### 自動メモリ解放（Auto Free）
+
+`Box<T>` 変数は**スコープ終了時・`return` 文実行前**に自動的に `free` されます。
+手動で `free` を呼ぶ必要はありません。
+
+```mryl
+fn example() {
+    let b: Box<i32> = Box::new(10);
+    println("{}", *b);
+    // スコープ終了時に自動 free(b)
+}
+```
+
+#### 多重ポインタの free 順序
+
+`Box<Box<T>>` の場合、内側から外側の順に free されます。
+
+```mryl
+let bb: Box<Box<i32>> = Box::new(Box::new(5));
+let inner: Box<i32>   = *bb;   // inner に内部ポインタを取り出し
+// → free(bb) のみ（inner は別途 free される）
+
+let bb2: Box<Box<i32>> = Box::new(Box::new(5));
+// inner を取り出さない場合 → free(*bb2); free(bb2) の順
+```
+
+#### Vec<Box<T>>
+
+`Box<T>[]`（可変長配列の各要素が Box）は、スコープ終了時に要素ごと free した後、配列本体も free されます。
+
+```mryl
+let boxes: Box<i32>[] = ...;
+// → for 各要素 { free(element) } → free(boxes.data)
 ```
 
 ---
@@ -1775,7 +1842,7 @@ println("{}", nums.count());                         // 5
 println("{}", nums.any((x: i32) => x > 4));          // true
 println("{}", nums.all((x: i32) => x > 0));          // true
 
-// for_each（副作用のみ、let に代入不可）
+// for_each（副作用専用・文としてのみ使用可。let/fix/代入/return に使用不可）
 nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 ```
 
@@ -1789,7 +1856,7 @@ nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 | `filter(fn(T)->bool)` | `Iter<T>` | `Where` | 条件を満たす要素だけ残す |
 | `take(n: i32)` | `Iter<T>` | `Take` | 先頭 n 件 |
 | `skip(n: i32)` | `Iter<T>` | `Skip` | 先頭 n 件をスキップ |
-| `select_many(fn(T)->U[])` | `Iter<U>` | `SelectMany` | map + flatten |
+| `select_many(fn(T)->U[])` | `Iter<U>` | `SelectMany` | map + flatten（v0.5.0 #65） |
 
 #### 終端操作（評価・消費）
 
@@ -1798,13 +1865,11 @@ nums.take(3).for_each((x: i32) => println("{}", x)); // 1 2 3
 | `to_array()` | `T[]` | `ToArray` | 配列に変換 |
 | `aggregate(fn(T,T)->T)` | `Result<T, string>` | `Aggregate` | 初期値なし畳み込み |
 | `aggregate(init, fn(U,T)->U)` | `U` | `Aggregate` | 初期値あり畳み込み |
-| `for_each(fn(T)->void)` | `void` | `ForEach` | 副作用のみ（`let` 代入不可） |
+| `for_each(fn(T)->void)` | `void` | `ForEach` | 副作用専用・文としてのみ使用可（`let`/`fix`/代入/`return` 不可） |
 | `count()` | `i32` | `Count` | 要素数 |
 | `first()` | `Result<T, string>` | `First` | 先頭要素（空なら `Err`） |
 | `any(fn(T)->bool)` | `bool` | `Any` | 条件を満たす要素が存在するか |
 | `all(fn(T)->bool)` | `bool` | `All` | 全要素が条件を満たすか |
-
-> **Note**: `select_many` は Python インタプリタモードのみ対応。C ネイティブ実行は v0.5.0 で対応予定。
 
 ---
 
@@ -1832,13 +1897,13 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 ✓ **fn 型パラメータ**（高階関数・コールバック）  
 ✓ **fix キーワード**（不変変数・不変関数パラメータ）  
 ✓ **前方宣言**（`fn name(...) -> T;` による相互再帰）  
-✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）
-✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ）
-✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）
-✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）
-✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）
-✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）
-✓ Python インタプリタ + C コードジェネレータの二重実行エンジン
+✓ **Option\<T\>**（`Some` / `None` + match パターンマッチ）  
+✓ **Box\<T\>**（ヒープポインタ / `*` deref / `.unbox()` / 多重ポインタ / スコープ自動 free / `Vec<Box<T>>` 対応）  
+✓ **string 操作**（連結 `+`、比較 `==` / `!=`、組み込みメソッド 11 種）  
+✓ **Iter\<T\> / LINQ**（`filter` / `select` / `take` / `skip` / `to_array` / `aggregate` / `for_each` / `count` / `first` / `any` / `all` / `select_many`）  
+✓ **ユーザー入力**（`read_line()` / `parse_int()` / `parse_f64()`（`Result<T, string>` 返し）/ `checked_div()`）  
+✓ **async / await**（状態機械 + シングルスレッドスケジューラ、`-lpthread` 不要）  
+✓ Python インタプリタ + C コードジェネレータの二重実行エンジン  
 
 学習用言語としても、趣味の言語としても十分な完成度を持っています。
 
@@ -1879,6 +1944,13 @@ Mryl は以下の特徴を備えた最小限の本格プログラミング言語
 | [tests/test_29_string_find.ml](../tests/test_29_string_find.ml) | `string.find()`（`Option<i32>` 返し・各種パターン） | ✅ Python + C + Native |
 | [tests/test_30_string_split.ml](../tests/test_30_string_split.ml) | `string.split()`（区切り文字・境界値・空文字） | ✅ Python + C + Native |
 | [tests/test_31_iter_linq.ml](../tests/test_31_iter_linq.ml) | `Iter<T>` / LINQ 全 12 メソッド（C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_32_iter_chain_free.ml](../tests/test_32_iter_chain_free.ml) | チェーン中間 `MrylVec` のメモリ解放（#62） | ✅ Python + C + Native |
+| [tests/test_33_select_many.ml](../tests/test_33_select_many.ml) | `select_many` C コード生成（#65、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_34_closure_capture.ml](../tests/test_34_closure_capture.ml) | クロージャキャプチャ fat pointer 実装（#44、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_35_box_free.ml](../tests/test_35_box_free.ml) | `Box<T>` 自動 free（スコープ・return・ループ・多重・`Vec<Box<T>>`、#66） | ✅ Python + C + Native |
+| [tests/test_36_for_each_void_stmt.ml](../tests/test_36_for_each_void_stmt.ml) | `for_each` void 文式・キャプチャあり fat pointer ラムダ（#64） | ✅ Python + C + Native |
+| [tests/test_37_iter_lambda_typecheck.ml](../tests/test_37_iter_lambda_typecheck.ml) | `Iter<T>` メソッドへのラムダ引数型検査（#63、C0/C1/MC/DC） | ✅ Python + C + Native |
+| [tests/test_38_async_result.ml](../tests/test_38_async_result.ml) | `async fn` + `Result<T,E>` FAULTED 状態伝播（#51） | ✅ Python + C + Native |
 
 実行方法は「[セットアップ](#セットアップ)」を参照してください。
 

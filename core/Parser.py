@@ -410,6 +410,11 @@ class Parser:
                 self.current = Token(TokenKind.GT, ">", self.current.line, self.current.column)
             else:
                 self.expect(TokenKind.GT)
+            # Box<T>[] など「ジェネリック型の動的配列」をサポート
+            if self.match(TokenKind.LBRACKET):
+                if self.current.kind == TokenKind.RBRACKET:
+                    self.expect(TokenKind.RBRACKET)
+                    return TypeNode(name, type_args=type_args, array_size=-1, line=line, column=col)
             return TypeNode(name, type_args=type_args, line=line, column=col)
 
         return TypeNode(name, line=line, column=col)

@@ -34,12 +34,22 @@ class _CodeGeneratorBase:
     sm_await_handles:            dict[int, str]
     capture_map:                 dict[str, str]
     closure_env_types:           dict[str, str]
+    lambda_captures:             dict[str, dict]
+    fn_type_registry:            set
+    fn_var_c_types:              dict[str, str]   # var_name → MrylFn_* 型名（キャプチャ型解決用）
+    thunk_counter:               int
     result_type_registry:        set[tuple[str, str, str]]
     current_return_type:         str | None
     enums:                       dict[str, Any]
     ident_renames:               dict[str, str]
     local_string_vars:           list[str]
+    local_closure_envs:          list[str]        # heap alloc した env ポインタ名（関数末尾で free）
+    closure_var_env_ptrs:        dict[str, str]   # {var_name: env_ptr_name}（return 時の free スキップ用）
     vec_var_types:               dict[str, str]
+    has_user_box:                bool             # ユーザー定義 struct Box があるかキャッシュ（generate() で確定）
+    local_box_vars:              list             # [(c_var_name, type_node)] Box 変数（宣言順）
+    box_inner_moved:             set              # 内部ポインタが別変数に移動済みの c_var_name 集合
+    local_box_vec_vars:          list             # [(c_var_name, inner_type_node)] Vec<Box<T>> 変数
 
     # ------------------------------------------------------------------
     # 出力系 (__init__.py 実装)

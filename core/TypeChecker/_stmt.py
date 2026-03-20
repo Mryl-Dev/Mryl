@@ -70,6 +70,9 @@ class TypeCheckerStmtMixin:
             if stmt.init_expr is None:
                 raise TypeError_(f"Cannot infer type of '{stmt.name}' without initializer", stmt)
             inferred = self.check_expr(stmt.init_expr)
+            # void 型は変数に代入できない（for_each 等の副作用専用操作を let に使うのを禁止）
+            if inferred.name == 'void':
+                raise TypeError_(f"Cannot assign void-typed expression to '{stmt.name}'", stmt.init_expr)
             stmt.type_node = inferred
         else:
             # 動的配列の空リテラル初期化: let arr: T[] = [] → 型チェックをスキップ
@@ -99,6 +102,9 @@ class TypeCheckerStmtMixin:
         if stmt.type_node is None:
             # 型推論
             inferred = self.check_expr(stmt.init_expr)
+            # void 型は変数に代入できない（for_each 等の副作用専用操作を fix に使うのを禁止）
+            if inferred.name == 'void':
+                raise TypeError_(f"Cannot assign void-typed expression to '{stmt.name}'", stmt.init_expr)
             stmt.type_node = inferred
         else:
             expr_type = self.check_expr(stmt.init_expr)
@@ -145,6 +151,10 @@ class TypeCheckerStmtMixin:
 
         target_type = self.check_expr(stmt.target)
         expr_type = self.check_expr(stmt.expr)
+
+        # void 式への代入は明示的にエラー（型不一致より先に検出して分かりやすいメッセージを出す）
+        if expr_type.name == 'void':
+            raise TypeError_("Cannot assign void-typed expression", stmt.expr)
 
         if not self.types_equal(target_type, expr_type):
             raise TypeError_(
@@ -226,6 +236,9 @@ class TypeCheckerStmtMixin:
     # ============================================
     def check_return(self, stmt: ReturnStmt, expected_return_type):
         expr_type = self.check_expr(stmt.expr)
+        # void 式を return に渡すのは禁止（for_each 等の副作用専用操作を返せない）
+        if expr_type.name == 'void':
+            raise TypeError_("Cannot return void-typed expression", stmt.expr)
         if expected_return_type is not None and not self.types_equal(expr_type, expected_return_type):
             raise TypeError_(
                 f"Return type mismatch: expected {expected_return_type}, got {expr_type}",
