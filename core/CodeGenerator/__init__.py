@@ -101,6 +101,7 @@ class CodeGenerator(
         self.local_box_vars              = []    # [(c_var_name, type_node)] Box 変数（宣言順）
         self.box_inner_moved             = set() # 内部ポインタが別変数に移動済みの c_var_name 集合
         self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)] Vec<Box<T>> 変数
+        self.local_toarray_vec_vars      = []    # [c_var_name] to_array() 結果の Vec 変数（.data を free）
 
     # ------------------------------------------------------------------
     # メインエントリポイント
@@ -135,6 +136,7 @@ class CodeGenerator(
         self.local_box_vars              = []    # [(c_var_name, type_node)]
         self.box_inner_moved             = set() # 内部ポインタ移動済みの c_var_name 集合
         self.local_box_vec_vars          = []    # [(c_var_name, inner_type_node)]
+        self.local_toarray_vec_vars      = []    # [c_var_name] to_array() 結果の Vec 変数
 
         # 全関数をキャッシュ
         self.program_functions = {func.name: func for func in program.functions}
@@ -464,9 +466,10 @@ class CodeGenerator(
         self.local_string_vars   = []
         self.local_closure_envs  = []
         self.closure_var_env_ptrs = {}
-        self.local_box_vars      = []    # Box 変数追跡（関数スコープ）
-        self.box_inner_moved     = set() # 内部ポインタ移動済み集合（関数スコープ）
-        self.local_box_vec_vars  = []    # Vec<Box<T>> 変数追跡（関数スコープ）
+        self.local_box_vars         = []    # Box 変数追跡（関数スコープ）
+        self.box_inner_moved        = set() # 内部ポインタ移動済み集合（関数スコープ）
+        self.local_box_vec_vars     = []    # Vec<Box<T>> 変数追跡（関数スコープ）
+        self.local_toarray_vec_vars = []    # to_array() 結果 Vec 変数追跡（関数スコープ）
         self.temp_string_counter = 0
         saved_renames            = self.ident_renames.copy()
         self.ident_renames       = {}
@@ -536,6 +539,9 @@ class CodeGenerator(
             # Vec<Box<T>> 変数: 要素を先に free してから .data を free
             for (vn, _inner_tn) in reversed(self.local_box_vec_vars):
                 self._emit_box_vec_free(vn)
+            # to_array() 結果 Vec 変数: .data を free（#71）
+            for vn in reversed(self.local_toarray_vec_vars):
+                self._emit(f"free({vn}.data);")
 
         if not has_return:
             if func.name == "main":
@@ -609,12 +615,14 @@ class CodeGenerator(
         saved_temp_ctr           = getattr(self, 'temp_string_counter', 0)
         saved_box_vars           = self.local_box_vars
         saved_box_inner          = self.box_inner_moved
-        saved_box_vec_vars       = self.local_box_vec_vars
-        self.local_string_vars   = []
-        self.temp_string_counter = 0
-        self.local_box_vars      = []
-        self.box_inner_moved     = set()
-        self.local_box_vec_vars  = []
+        saved_box_vec_vars          = self.local_box_vec_vars
+        saved_toarray_vec_vars      = self.local_toarray_vec_vars
+        self.local_string_vars      = []
+        self.temp_string_counter    = 0
+        self.local_box_vars         = []
+        self.box_inner_moved        = set()
+        self.local_box_vec_vars     = []
+        self.local_toarray_vec_vars = []
 
         # env に self と引数を登録（_infer_expr_type が struct フィールド型を解決できるようにする）
         method_env: dict = {}
@@ -645,13 +653,17 @@ class CodeGenerator(
                 self._emit_box_free(vn, tn)
             for (vn, _tn) in reversed(self.local_box_vec_vars):
                 self._emit_box_vec_free(vn)
+            # to_array() 結果 Vec 変数: .data を free（#71）
+            for vn in reversed(self.local_toarray_vec_vars):
+                self._emit(f"free({vn}.data);")
 
         # 復元
-        self.local_string_vars   = saved_str_vars
-        self.temp_string_counter = saved_temp_ctr
-        self.local_box_vars      = saved_box_vars
-        self.box_inner_moved     = saved_box_inner
-        self.local_box_vec_vars  = saved_box_vec_vars
+        self.local_string_vars      = saved_str_vars
+        self.temp_string_counter    = saved_temp_ctr
+        self.local_box_vars         = saved_box_vars
+        self.box_inner_moved        = saved_box_inner
+        self.local_box_vec_vars     = saved_box_vec_vars
+        self.local_toarray_vec_vars = saved_toarray_vec_vars
 
         self.indent_level -= 1
         self._emit("}")
