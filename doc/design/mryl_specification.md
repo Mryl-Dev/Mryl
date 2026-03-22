@@ -243,7 +243,7 @@ Mryl/
 | `fn f(cb: fn(i32) -> void, ...)` | void 戻り値の関数型 |
 | ラムダ変数を渡す | `apply(double, 5)` — ラムダをコールバックとして渡す |
 | 名前付き関数を渡す | `apply(my_func, 5)` — 定義済み関数を渡す |
-| C コード生成 | `型 (*cb)(パラメータ)` の関数ポインタ型 |
+| C コード生成 | `MrylFn_*` fat pointer 構造体（`{fn_ptr, env}`）。名前付き関数を渡す場合は `void* __e` 付き thunk を自動生成して fat pointer でラップ |
 
 ### 3.9 static fn（静的メソッド）
 

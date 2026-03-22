@@ -234,8 +234,26 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                 return f"_mryl_to_string_bool({arg_code})"
 
         # Lambda 引数を fat pointer struct に変換（issue ②⑧: ブロックスコープ変数でアドレス確保）
-        has_lambda_arg = any(arg.__class__.__name__ == "Lambda" for arg in expr.args)
-        if has_lambda_arg:
+        # 名前付き関数を fn(T)->U 型引数へ渡す場合も fat pointer ラッパーを生成（#75）
+        called_func = self.program_functions.get(expr.name)
+
+        def _is_named_fn_arg(idx: int, arg) -> bool:
+            """引数が名前付き関数参照かつ対応パラメータが fn(T)->U 型なら True を返す。
+            ローカル変数スコープに同名がある場合は既に MrylFn_* 構造体のため対象外。"""
+            if arg.__class__.__name__ != "VarRef":
+                return False
+            if any(arg.name in scope for scope in self.env):
+                return False   # ローカル fn 変数は既に MrylFn_* 構造体
+            if arg.name not in self.program_functions:
+                return False
+            if called_func is None or idx >= len(called_func.params):
+                return False
+            pt = called_func.params[idx].type_node
+            return pt is not None and pt.name == "fn" and bool(getattr(pt, 'type_args', None))
+
+        has_lambda_arg   = any(arg.__class__.__name__ == "Lambda" for arg in expr.args)
+        has_named_fn_arg = any(_is_named_fn_arg(i, arg) for i, arg in enumerate(expr.args))
+        if has_lambda_arg or has_named_fn_arg:
             args_list = []
             for i, arg in enumerate(expr.args):
                 if arg.__class__.__name__ == "Lambda":
@@ -259,6 +277,30 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                         args_list.append(f"({fn_c_type}){{{lam_name_v}, &{env_var}}}")
                     else:
                         args_list.append(f"({fn_c_type}){{{lam_name_v}, NULL}}")
+                elif _is_named_fn_arg(i, arg):
+                    # 名前付き関数 → void* __e 付き thunk を生成して fat pointer に包む（#75）
+                    # pending_lambdas により thunk は関数前方に static 関数として出力される
+                    fn_decl      = self.program_functions[arg.name]
+                    thunk_name   = f"__thunk_{self.thunk_counter}"
+                    self.thunk_counter += 1
+                    t_params_c   = [
+                        f"{self._type_to_c(p.type_node) if p.type_node else 'int32_t'} {p.name}"
+                        for p in fn_decl.params
+                    ]
+                    t_params_str = ", ".join(t_params_c)
+                    t_ret        = self._type_to_c(fn_decl.return_type) if fn_decl.return_type else "void"
+                    call_args    = ", ".join(p.name for p in fn_decl.params)
+                    ret_kw       = "return " if t_ret != "void" else ""
+                    self.pending_lambdas.append(
+                        (thunk_name, t_ret, t_params_str, [f"    {ret_kw}{fn_decl.name}({call_args});"], {})
+                    )
+                    arg_cs_t = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in fn_decl.params]
+                    self.lambda_captures[thunk_name] = {'captures': {}, 'ret_c': t_ret, 'arg_cs': arg_cs_t}
+                    pt        = called_func.params[i].type_node
+                    fn_c_type = self._type_to_c(pt)
+                    wrap_var  = f"__wrap_{_safe_c_name(arg.name)}_{self.thunk_counter - 1}"
+                    self._emit(f"{fn_c_type} {wrap_var} = {{{thunk_name}, NULL}};")
+                    args_list.append(wrap_var)
                 else:
                     args_list.append(self._generate_expr(arg))
             return f"{expr.name}({', '.join(args_list)})"
