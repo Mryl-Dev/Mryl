@@ -146,8 +146,13 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
             for scope in reversed(self.env):
                 if expr.name in scope and scope[expr.name] in ('fn', 'fn_closure'):
                     return self._generate_function_call(expr)
-            # Lambda 引数を含む場合は fat pointer 変換が必要なので _generate_function_call に委譲（issue ②）
-            if any(arg.__class__.__name__ == "Lambda" for arg in expr.args):
+            # Lambda / static メソッド参照 / 名前付き関数参照 を含む場合は
+            # fat pointer 変換が必要なので _generate_function_call に委譲（issue ②, #75, #76）
+            if any(
+                arg.__class__.__name__ == "Lambda"
+                or (arg.__class__.__name__ == "EnumVariantExpr" and not arg.has_parens)
+                for arg in expr.args
+            ):
                 return self._generate_function_call(expr)
             # Ok/Err/Some は compound literal 生成が必要なので _generate_function_call に委譲
             if expr.name in ("Ok", "Err", "Some"):
@@ -237,14 +242,31 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
         # 名前付き関数を fn(T)->U 型引数へ渡す場合も fat pointer ラッパーを生成（#75）
         called_func = self.program_functions.get(expr.name)
 
+        # static メソッドのルックアップ: {C名 -> method} （例: "Point_origin" -> method）
+        # static fn も名前付き関数と同様に fat pointer ラッパーが必要（#76）
+        static_methods = {
+            f"{s.name}_{m.name}": m
+            for s in self.structs
+            for m in s.methods
+            if getattr(m, 'is_static', False)
+        }
+
         def _is_named_fn_arg(idx: int, arg) -> bool:
-            """引数が名前付き関数参照かつ対応パラメータが fn(T)->U 型なら True を返す。
+            """引数が名前付き関数参照（またはstatic メソッド参照）かつ
+            対応パラメータが fn(T)->U 型なら True を返す。
             ローカル変数スコープに同名がある場合は既に MrylFn_* 構造体のため対象外。"""
-            if arg.__class__.__name__ != "VarRef":
-                return False
-            if any(arg.name in scope for scope in self.env):
-                return False   # ローカル fn 変数は既に MrylFn_* 構造体
-            if arg.name not in self.program_functions:
+            cls = arg.__class__.__name__
+            # static メソッド参照: Point::origin（has_parens=False の EnumVariantExpr）
+            if cls == "EnumVariantExpr" and not arg.has_parens:
+                c_name = f"{arg.enum_name}_{arg.variant_name}"
+                if c_name not in static_methods:
+                    return False
+            elif cls == "VarRef":
+                if any(arg.name in scope for scope in self.env):
+                    return False   # ローカル fn 変数は既に MrylFn_* 構造体
+                if arg.name not in self.program_functions and arg.name not in static_methods:
+                    return False
+            else:
                 return False
             if called_func is None or idx >= len(called_func.params):
                 return False
@@ -278,9 +300,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                     else:
                         args_list.append(f"({fn_c_type}){{{lam_name_v}, NULL}}")
                 elif _is_named_fn_arg(i, arg):
-                    # 名前付き関数 → void* __e 付き thunk を生成して fat pointer に包む（#75）
+                    # 名前付き関数 / static メソッド → void* __e 付き thunk を生成して fat pointer に包む（#75, #76）
                     # pending_lambdas により thunk は関数前方に static 関数として出力される
-                    fn_decl      = self.program_functions[arg.name]
+                    # EnumVariantExpr(Point::origin) は c_func_name="Point_origin", fn_decl=static method
+                    if arg.__class__.__name__ == "EnumVariantExpr":
+                        c_func_name = f"{arg.enum_name}_{arg.variant_name}"
+                        fn_decl     = static_methods[c_func_name]
+                    else:
+                        c_func_name = arg.name
+                        fn_decl     = self.program_functions.get(arg.name) or static_methods[arg.name]
                     thunk_name   = f"__thunk_{self.thunk_counter}"
                     self.thunk_counter += 1
                     t_params_c   = [
@@ -291,14 +319,15 @@ class CodeGeneratorExprMixin(_CodeGeneratorBase):
                     t_ret        = self._type_to_c(fn_decl.return_type) if fn_decl.return_type else "void"
                     call_args    = ", ".join(p.name for p in fn_decl.params)
                     ret_kw       = "return " if t_ret != "void" else ""
+                    # thunk 本体: c_func_name = C 関数名（static メソッドは "Struct_method" 形式）
                     self.pending_lambdas.append(
-                        (thunk_name, t_ret, t_params_str, [f"    {ret_kw}{fn_decl.name}({call_args});"], {})
+                        (thunk_name, t_ret, t_params_str, [f"    {ret_kw}{c_func_name}({call_args});"], {})
                     )
                     arg_cs_t = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in fn_decl.params]
                     self.lambda_captures[thunk_name] = {'captures': {}, 'ret_c': t_ret, 'arg_cs': arg_cs_t}
                     pt        = called_func.params[i].type_node
                     fn_c_type = self._type_to_c(pt)
-                    wrap_var  = f"__wrap_{_safe_c_name(arg.name)}_{self.thunk_counter - 1}"
+                    wrap_var  = f"__wrap_{_safe_c_name(c_func_name)}_{self.thunk_counter - 1}"
                     self._emit(f"{fn_c_type} {wrap_var} = {{{thunk_name}, NULL}};")
                     args_list.append(wrap_var)
                 else:

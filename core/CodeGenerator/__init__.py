@@ -161,8 +161,6 @@ class CodeGenerator(
         self._emit("// __RESULT_TYPEDEFS_PLACEHOLDER__")
         # Option<T> typedef プレースホルダー
         self._emit("// __OPTION_TYPEDEFS_PLACEHOLDER__")
-        # fn 型 fat pointer typedef プレースホルダー
-        self._emit("// __FN_TYPEDEFS_PLACEHOLDER__")
 
         # enum の C 定義を出力
         self.enums = {e.name: e for e in program.enums}
@@ -185,6 +183,10 @@ class CodeGenerator(
             self.indent_level -= 1
             self._emit(f"}} {mono};")
             self._emit("")
+
+        # fn 型 fat pointer typedef プレースホルダー
+        # ※ MrylFn_* はユーザー定義 struct 型を参照するため、struct 定義ブロックの後に配置する (#76)
+        self._emit("// __FN_TYPEDEFS_PLACEHOLDER__")
 
         # Built-in 関数の出力
         self._emit_builtin_functions()

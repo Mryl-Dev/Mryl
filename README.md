@@ -1170,7 +1170,11 @@ let c2 = make(Counter::zero);
 |---|---|
 | `static fn zero() -> Counter` | `Counter Counter_zero()` |
 | `Counter::zero()` | `Counter_zero()` |
-| `Counter::zero`（参照） | `Counter_zero`（関数ポインタ） |
+| `Counter::zero`（単純参照） | `Counter_zero`（関数ポインタ） |
+| `Counter::zero`（`fn()->Counter` 型引数・変数代入） | thunk + fat pointer `MrylFn_void_ret_Counter` |
+
+> `fn(T)->U` 型パラメータへ渡す場合や `fn` 型変数へ代入する場合は、
+> 統一的な fat pointer 規約（`MrylFn_*`）に合わせるため thunk ラッパーが自動生成されます。
 
 ---
 

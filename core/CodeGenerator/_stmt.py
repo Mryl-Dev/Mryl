@@ -207,17 +207,47 @@ class CodeGeneratorStmtMixin(_CodeGeneratorBase):
                 return
 
         # static fn 参照（has_parens=False の EnumVariantExpr）を fn 型変数として宣言
+        # fn(T)->U 型注釈がある場合は thunk + fat pointer (MrylFn_*) として生成する（#76）
+        # ※ raw 関数ポインタ形式だと呼び出し側の `var.fn(...)` 規約と不整合になる
         if init_expr_class == "EnumVariantExpr" and not stmt.init_expr.has_parens:
             if type_node and type_node.name == "fn" and getattr(type_node, 'type_args', None):
-                ret_t      = self._type_to_c(type_node.type_args[-1])
-                arg_types  = [self._type_to_c(t) for t in type_node.type_args[:-1]]
-                args_str   = ", ".join(arg_types) if arg_types else "void"
+                c_func_name = f"{stmt.init_expr.enum_name}_{stmt.init_expr.variant_name}"
+                method = next(
+                    (m for s in self.structs for m in s.methods
+                     if getattr(m, 'is_static', False) and f"{s.name}_{m.name}" == c_func_name),
+                    None
+                )
                 c_var_name = _safe_c_name(stmt.name)
                 if c_var_name != stmt.name:
                     self.ident_renames[stmt.name] = c_var_name
-                c_func = self._generate_expr(stmt.init_expr)
-                self._emit(f"{ret_t} (*{c_var_name})({args_str}) = {c_func};")
+                fn_c_type  = self._type_to_c(type_node)
+                if method is not None:
+                    # thunk を生成して fat pointer に包む（method.params は static fn なので self なし）
+                    thunk_name   = f"__thunk_{self.thunk_counter}"
+                    self.thunk_counter += 1
+                    t_params_c   = [
+                        f"{self._type_to_c(p.type_node) if p.type_node else 'int32_t'} {p.name}"
+                        for p in method.params
+                    ]
+                    t_params_str = ", ".join(t_params_c)
+                    t_ret        = self._type_to_c(method.return_type) if method.return_type else "void"
+                    call_args    = ", ".join(p.name for p in method.params)
+                    ret_kw       = "return " if t_ret != "void" else ""
+                    self.pending_lambdas.append(
+                        (thunk_name, t_ret, t_params_str, [f"    {ret_kw}{c_func_name}({call_args});"], {})
+                    )
+                    arg_cs_t = [self._type_to_c(p.type_node) if p.type_node else "int32_t" for p in method.params]
+                    self.lambda_captures[thunk_name] = {'captures': {}, 'ret_c': t_ret, 'arg_cs': arg_cs_t}
+                    self.fn_type_registry.add((tuple(arg_cs_t), t_ret, fn_c_type))
+                    self._emit(f"{fn_c_type} {c_var_name} = {{{thunk_name}, NULL}};")
+                else:
+                    # static method が見つからない場合はフォールバック（既存挙動）
+                    c_func = self._generate_expr(stmt.init_expr)
+                    self._emit(f"{fn_c_type} {c_var_name};")
+                    self._emit(f"{c_var_name}.fn = (void*){c_func};")
+                    self._emit(f"{c_var_name}.env = NULL;")
                 self.env[-1][stmt.name] = "fn"
+                self.fn_var_c_types[stmt.name] = fn_c_type
                 return
 
         # FunctionCall 引数の StringLiteral を一時変数化
